@@ -354,9 +354,23 @@ def main(args):
     # we'll never go through all the data, so no need for epochs
     # ##############################
 
+    cal_step = 50
+    begin_step = 20
+    end_step = begin_step + cal_step
+
+
     torch.cuda.reset_peak_memory_stats()
     n_lora_restarts = 0
     for batch_idx, batch in enumerate(dataloader):
+
+        if global_rank == 0:
+            if global_step == begin_step:
+                cur_time = time.time()
+            if global_step == end_step:
+                time_interval = time.time() - cur_time
+        if global_step == end_step:
+            break
+
 
         global_step += 1
         local_step += 1
@@ -527,7 +541,11 @@ def main(args):
             all_results = {
                 "final_eval_loss": total_loss,
                 "final_eval_tokens": evaluated_on_tokens,
-                "wandb_link": wandb.run.get_url()
+                "wandb_link": wandb.run.get_url(),
+                "begin_step": begin_step,
+                "end_step": end_step,
+                "total_time": time_interval,
+                "average_time": time_interval / cal_step,
             }
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump(all_results, f)
