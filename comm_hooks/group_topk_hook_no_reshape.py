@@ -13,7 +13,7 @@ from comm_hooks.utils import HookState, _get_allgather_out_list, dtype_bits, ten
 logger = logging.getLogger(__name__)
 
 
-def group_topk_project_and_select(tensor, r, compress_ratio, group):
+def group_topk_project_and_select(tensor, r, compress_ratio, group, use_deterministic_projection=False, projection_seed=None):
 
     d = tensor.numel()
     if tensor.dim() == 1:  
@@ -28,9 +28,15 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         n, m = tensor.shape
         k = max(1, int(n * compress_ratio))
     
-        # 优化：使用更高效的随机数生成，避免每次都重新分配内存
+        # 改进：支持确定性投影矩阵
         V = torch.empty(m, r, device=tensor.device, dtype=tensor.dtype)
-        V.normal_()  # 原地生成正态分布随机数，比torch.randn更高效
+        if use_deterministic_projection and projection_seed is not None:
+            # 使用固定的seed生成投影矩阵，提高稳定性
+            generator = torch.Generator(device=tensor.device)
+            generator.manual_seed(projection_seed)
+            V.normal_(generator=generator)
+        else:
+            V.normal_()  # 原地生成正态分布随机数，比torch.randn更高效
         
         # 优化：直接使用tensor @ V的结果，避免额外的clone
         P_local = tensor @ V     # shape: [n, r]
@@ -61,9 +67,14 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         tensor_2D = tensor.view(n, m)  # 优化：使用view代替reshape，避免不必要的内存复制
         k = max(1, int(n * compress_ratio))
     
-        # 优化：同样使用更高效的随机数生成
+        # 改进：支持确定性投影矩阵
         V = torch.empty(m, r, device=tensor.device, dtype=tensor.dtype)
-        V.normal_()
+        if use_deterministic_projection and projection_seed is not None:
+            generator = torch.Generator(device=tensor.device)
+            generator.manual_seed(projection_seed)
+            V.normal_(generator=generator)
+        else:
+            V.normal_()
         
         P_local = tensor_2D @ V     # shape: [n, r]
         P_bits = tensor_bits(P_local)
@@ -92,11 +103,18 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
 
 
     
-def compress_tensor_to_memory(tensors, k_list, values_memory, indices_memory, compress_ratio, r, group, use_error_feedback):
+def compress_tensor_to_memory(tensors, k_list, values_memory, indices_memory, compress_ratio, r, group, use_error_feedback, use_deterministic_projection=False, projection_seed=None):
     offset = 0
     bits_sum = 0
     for tensor, k in zip(tensors, k_list):  
-        values, indices, P_bits, comm_bits= group_topk_project_and_select(tensor=tensor, r=r, compress_ratio=compress_ratio, group=group)
+        values, indices, P_bits, comm_bits= group_topk_project_and_select(
+            tensor=tensor, 
+            r=r, 
+            compress_ratio=compress_ratio, 
+            group=group,
+            use_deterministic_projection=use_deterministic_projection,
+            projection_seed=projection_seed
+        )
         values_memory[offset:offset+k] = values
         indices_memory[offset:offset+k] = indices  # 优化：移除不必要的类型转换，indices已经是int64
         offset += k
@@ -132,11 +150,16 @@ class GroupTopKState(HookState):
         start_compress_iter: int = 2, 
         use_error_feedback="noef", 
         seed=0, 
-        error_decay=1.0
+        error_decay=1.0,
+        gradual_compression=True,  # 新增：渐进式压缩
+        warmup_iters=100          # 新增：压缩预热步数
     ):
         super().__init__(process_group)
         self.r = r
+        self.base_compress_ratio = compress_ratio  # 保存原始压缩比
         self.compress_ratio = compress_ratio
+        self.gradual_compression = gradual_compression
+        self.warmup_iters = start_compress_iter + warmup_iters
 
         self.iter = 0
         self.start_compress_iter = start_compress_iter
@@ -149,24 +172,45 @@ class GroupTopKState(HookState):
         self.global_error_dict: Dict[int, torch.Tensor] = {}
         self.error_decay = error_decay  
 
+        # 新增：压缩切换的平滑处理
+        self.compression_started = False
 
         # 设置统一的 RNG，用于 sample 每一轮的投影矩阵 seed
         self.rng = torch.Generator()
         self.rng.manual_seed(seed)
+    
+    def get_current_compress_ratio(self):
+        """计算当前的压缩比，支持渐进式压缩"""
+        if not self.gradual_compression or not self.compression_started:
+            return self.base_compress_ratio
+            
+        # 渐进式压缩：从较高的压缩比逐渐降低到目标压缩比
+        compress_progress = self.iter - self.start_compress_iter
+        if compress_progress < self.warmup_iters:
+            # 从 0.8 渐进到 base_compress_ratio
+            start_ratio = 0.8
+            progress = compress_progress / self.warmup_iters
+            current_ratio = start_ratio - (start_ratio - self.base_compress_ratio) * progress
+            return max(current_ratio, self.base_compress_ratio)
+        else:
+            return self.base_compress_ratio
 
 def cal_k(state, tensor):
+    # 使用动态压缩比
+    current_compress_ratio = state.get_current_compress_ratio()
+    
     if tensor.dim() == 1:
         k = tensor.numel()
         # d = tensor.numel()
-        # k = max(1, int(d * state.compress_ratio))
+        # k = max(1, int(d * current_compress_ratio))
     elif tensor.dim()==2:
-        k = max(1, int(tensor.shape[0] * state.compress_ratio)) * tensor.shape[1]
+        k = max(1, int(tensor.shape[0] * current_compress_ratio)) * tensor.shape[1]
     else:
         t = tensor.shape[-1]
         m = 2 * t * t
         d = tensor.numel()
         n = d // m
-        k = max(1, int(n * state.compress_ratio)) * m
+        k = max(1, int(n * current_compress_ratio)) * m
         
     return k
 
@@ -198,10 +242,20 @@ def group_topk_hook(
         state.maybe_increase_iter(bucket)
         return default_hooks._allreduce_fut(group_to_use, input_tensor, state)
     
+    # 新增：压缩切换的平滑处理
+    if not state.compression_started:
+        state.compression_started = True
+        logger.info(f"Starting compression at iteration {state.iter} with gradual compression enabled: {state.gradual_compression}")
+        if state.use_error_feedback in ["ef14", "ef21"]:
+            logger.info("Initializing error feedback mechanism for smooth compression transition")
+    
     # group_topk 压缩器压缩 -----------------------------------------------------------------------------------
     device = tensors[0].device  
     dtype = tensors[0].dtype
 
+    # 获取当前的压缩比（支持渐进式压缩）
+    current_compress_ratio = state.get_current_compress_ratio()
+    
     # Incorporate the error from the previous state into the gradients.
     bucket_index = bucket.index() 
     total_length = input_tensor.shape[0]
@@ -238,7 +292,9 @@ def group_topk_hook(
     seed = torch.randint(0, 1_000_000_000, (1,), generator=state.rng).item()
     torch.manual_seed(seed)
   
-    
+    # 使用确定性投影矩阵来提高稳定性（在压缩的早期阶段）
+    use_deterministic = state.compression_started and (state.iter - state.start_compress_iter < state.warmup_iters)
+    projection_seed = seed if use_deterministic else None
 
     k_list = [cal_k(state, tensor) for tensor in tensors]
 
@@ -246,7 +302,18 @@ def group_topk_hook(
 
     values_memory = torch.empty(sum_k, dtype=dtype, device=device) # 初始化为0
     indices_memory = torch.empty(sum_k, dtype=torch.int64, device=device)  # 优化：使用int64保持一致性
-    _, _, bits_sum = compress_tensor_to_memory(tensors=tensors, k_list=k_list, values_memory=values_memory, indices_memory=indices_memory, compress_ratio=state.compress_ratio, r=state.r, group=group_to_use, use_error_feedback=state.use_error_feedback)
+    _, _, bits_sum = compress_tensor_to_memory(
+        tensors=tensors, 
+        k_list=k_list, 
+        values_memory=values_memory, 
+        indices_memory=indices_memory, 
+        compress_ratio=current_compress_ratio, 
+        r=state.r, 
+        group=group_to_use, 
+        use_error_feedback=state.use_error_feedback,
+        use_deterministic_projection=use_deterministic,
+        projection_seed=projection_seed
+    )
 
    
 

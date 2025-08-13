@@ -433,17 +433,17 @@ def main(args):
         if update_step % args.eval_every == 0 or update_step == 1:
             logger.info(f"Eval Every Step: {args.eval_every}")
             logger.info(f"Performing evaluation at step {update_step}")
-            total_loss, evaluated_on_tokens = evaluate_model(
-                model, args.dataset_path, preprocess_batched, pad_idx, global_rank, world_size, device, args.batch_size
-            )
-            if global_rank == 0:
-                wandb.log({
-                    "final_eval_loss": total_loss,
-                    "final_eval_tokens": evaluated_on_tokens,
-                    },
-                    step=global_step,
-                )
-            logger.info(f"Eval loss at step {update_step}: {total_loss}")
+            # total_loss, evaluated_on_tokens = evaluate_model(
+            #     model, args.dataset_path, preprocess_batched, pad_idx, global_rank, world_size, device, args.batch_size
+            # )
+            # if global_rank == 0:
+            #     wandb.log({
+            #         "final_eval_loss": total_loss,
+            #         "final_eval_tokens": evaluated_on_tokens,
+            #         },
+            #         step=global_step,
+            #     )
+            # logger.info(f"Eval loss at step {update_step}: {total_loss}")
 
         lr = optimizer.param_groups[0]["lr"]
 
