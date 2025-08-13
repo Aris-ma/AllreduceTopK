@@ -29,7 +29,7 @@ for TASK_NAME in cola;do
                             --with_tracking \
                             --report_to wandb \
                             --compress_ratio 0.2 \
-                            --r 4 \
+                            --col_rank 4 \
                             --optimizer "sgd" \
                             --weight_decay 0.01 \
                             --momentum $momentum

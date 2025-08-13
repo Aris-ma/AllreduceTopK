@@ -32,8 +32,8 @@ gc=1.0
 
 for LEARNING_RATE in 1e-3; do
     for use_error_feedback in ef14; do
-        for MODEL in llama_130m; do
-            for compressor in "none" "group_topk_no_reshape"; do
+        for MODEL in llama_60m llama_130m llama_350m llama_1b; do
+            for compressor in "none" "topk_sync" "randk_sync"; do
                 # time
                 current_time=$(date "+%Y%m%d%H%M%S")
                 # tag
@@ -66,7 +66,7 @@ for LEARNING_RATE in 1e-3; do
                     --start_compress_iter $start_compress_iter \
                     --use_error_feedback $use_error_feedback \
                     --compress_ratio $compress_ratio \
-                    --r $r \
+                    --col_rank $r \
                     \
                     --grad_clipping $gc \
                     \

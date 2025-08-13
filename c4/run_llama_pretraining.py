@@ -219,7 +219,7 @@ def main(args):
 
     # it doesn't matter which tokenizer we use, because we train from scratch
     # T5 tokenizer was trained on C4 and we are also training on C4, so it's a good choice
-    tokenizer = AutoTokenizer.from_pretrained("t5-base", model_max_length=args.max_length)
+    tokenizer = AutoTokenizer.from_pretrained("/data/pretrained_models/t5-base", model_max_length=args.max_length)
 
     def preprocess_batched(batch):
         batch = tokenizer(
@@ -531,10 +531,11 @@ def main(args):
             }
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump(all_results, f)
-
+    
     logger.info("Script finished successfully")
     print(f"Rank {global_rank} finished successfully")
-
+    dist.barrier()
+    exit()
 
 if __name__ == "__main__":
     print("Starting script")

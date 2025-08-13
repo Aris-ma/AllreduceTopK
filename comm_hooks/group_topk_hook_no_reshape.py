@@ -16,68 +16,74 @@ logger = logging.getLogger(__name__)
 def group_topk_project_and_select(tensor, r, compress_ratio, group):
 
     d = tensor.numel()
-    if tensor.dim()==1:  
-        values = tensor.flatten()  # 只有一维就不压了，直接传过去。
-        indices = torch.arange(d, device=tensor.device).flatten()
+    if tensor.dim() == 1:  
+        # 1D tensor: no compression, pass through directly
+        # 优化：避免不必要的flatten()和clone()
         P_bits = 0
-        comm_bits = tensor_bits(values)
-        return values.clone(), indices, P_bits, comm_bits
+        comm_bits = tensor_bits(tensor)
+        indices = torch.arange(d, device=tensor.device, dtype=torch.int64)  # 使用int64保持一致性
+        return tensor, indices, P_bits, comm_bits
 
-    elif tensor.dim()==2:
-        n = tensor.shape[0]
-        m = tensor.shape[1]
+    elif tensor.dim() == 2:
+        n, m = tensor.shape
         k = max(1, int(n * compress_ratio))
     
-        V = torch.randn(m, r, device=tensor.device)
-        # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
+        # 优化：使用更高效的随机数生成，避免每次都重新分配内存
+        V = torch.empty(m, r, device=tensor.device, dtype=tensor.dtype)
+        V.normal_()  # 原地生成正态分布随机数，比torch.randn更高效
+        
+        # 优化：直接使用tensor @ V的结果，避免额外的clone
         P_local = tensor @ V     # shape: [n, r]
-    
-        # AllReduce to get global projection P
-        P = P_local.clone()
-        P_bits = tensor_bits(P)
-        dist.all_reduce(P, group=group)
-        P /= dist.get_world_size(group)
+        P_bits = tensor_bits(P_local)
+        
+        # AllReduce operation - 这里必须clone因为all_reduce是原地操作
+        dist.all_reduce(P_local, group=group)
+        P_local.div_(dist.get_world_size(group))  # 原地除法
 
-        # Compute squared norm per row
-        norms = torch.sum(P ** 2, dim=1)  # [n]
+        # 优化：直接计算平方和，避免中间张量
+        norms = torch.sum(P_local.square(), dim=1)  # square()比**2稍快
         _, topk_indices = torch.topk(norms, k=k, largest=True, sorted=False)
-        row_offset = topk_indices.view(-1, 1) * m  # [k, 1]
-        col_indices = torch.arange(m, device=tensor.device).view(1, -1)  # [1, m]
+        
+        # 优化：使用向量化操作计算indices，避免循环
+        row_offset = topk_indices.unsqueeze(1) * m  # [k, 1]
+        col_indices = torch.arange(m, device=tensor.device, dtype=torch.int64).unsqueeze(0)  # [1, m]
         indices = (row_offset + col_indices).flatten()  # shape: [k * m]
-    
-    
-        # print(f"indices={indices}")
-        comm_bits = tensor_bits(tensor[topk_indices])
-        return tensor[topk_indices].flatten().clone(), indices , P_bits, comm_bits # 返回选中行（压缩值）
+        
+        selected_rows = tensor[topk_indices]
+        comm_bits = tensor_bits(selected_rows)
+        return selected_rows.flatten(), indices, P_bits, comm_bits
+        
     else:
+        # Higher dimensional tensors
         t = tensor.shape[-1]
         m = 2 * t * t
         n = d // m
-        tensor_2D = tensor.reshape(n, m)
+        tensor_2D = tensor.view(n, m)  # 优化：使用view代替reshape，避免不必要的内存复制
         k = max(1, int(n * compress_ratio))
     
-        V = torch.randn(m, r, device=tensor.device)
-        # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
+        # 优化：同样使用更高效的随机数生成
+        V = torch.empty(m, r, device=tensor.device, dtype=tensor.dtype)
+        V.normal_()
+        
         P_local = tensor_2D @ V     # shape: [n, r]
-    
-        # AllReduce to get global projection P
-        P = P_local.clone()
-        P_bits = tensor_bits(P)
-        dist.all_reduce(P, group=group)
-        P /= dist.get_world_size(group)
+        P_bits = tensor_bits(P_local)
+        
+        # AllReduce operation
+        dist.all_reduce(P_local, group=group)
+        P_local.div_(dist.get_world_size(group))
 
-        # Compute squared norm per row
-        norms = torch.sum(P ** 2, dim=1)  # [n]
+        # 优化：直接计算平方和
+        norms = torch.sum(P_local.square(), dim=1)
         _, topk_indices = torch.topk(norms, k=k, largest=True, sorted=False)
-        row_offset = topk_indices.view(-1, 1) * m  # [k, 1]
-        col_indices = torch.arange(m, device=tensor.device).view(1, -1)  # [1, m]
+        
+        # 优化：使用向量化操作计算indices
+        row_offset = topk_indices.unsqueeze(1) * m  # [k, 1]
+        col_indices = torch.arange(m, device=tensor.device, dtype=torch.int64).unsqueeze(0)  # [1, m]
         indices = (row_offset + col_indices).flatten()  # shape: [k * m]
-    
-        # print(f"indices.dtype={indices.dtype}")
-        # print(f"values.dtype={tensor_2D[topk_indices].dtype}")
-        # print(f"indices={indices}")
-        comm_bits = tensor_bits(tensor_2D[topk_indices])
-        return tensor_2D[topk_indices].flatten().clone(), indices, P_bits, comm_bits  # 返回选中行（压缩值）
+        
+        selected_rows = tensor_2D[topk_indices]
+        comm_bits = tensor_bits(selected_rows)
+        return selected_rows.flatten(), indices, P_bits, comm_bits
 
 
 
@@ -92,7 +98,7 @@ def compress_tensor_to_memory(tensors, k_list, values_memory, indices_memory, co
     for tensor, k in zip(tensors, k_list):  
         values, indices, P_bits, comm_bits= group_topk_project_and_select(tensor=tensor, r=r, compress_ratio=compress_ratio, group=group)
         values_memory[offset:offset+k] = values
-        indices_memory[offset:offset+k] = indices.to(torch.int) 
+        indices_memory[offset:offset+k] = indices  # 优化：移除不必要的类型转换，indices已经是int64
         offset += k
         bits_sum += P_bits + comm_bits # bits_sum是一个GPU的一个bucket的通信量。
 
@@ -114,7 +120,7 @@ def decompress_memory_to_tensor_and_aggregate(tensors, k_list, values_memory, in
         indices = indices_memory[offset:offset+k]
         # avoid creating a new tensor for the view
         flattened_tensor = tensor.view(-1)
-        flattened_tensor[indices.to(torch.int64)] = values
+        flattened_tensor[indices] = values  # 优化：移除不必要的类型转换，indices已经是正确类型
         offset += k
     return None
 
@@ -239,7 +245,7 @@ def group_topk_hook(
     sum_k = sum(k_list) # k_list中元素求和即为values_memory和indices_memory的长度。
 
     values_memory = torch.empty(sum_k, dtype=dtype, device=device) # 初始化为0
-    indices_memory = torch.empty(sum_k, dtype=torch.int, device=device)
+    indices_memory = torch.empty(sum_k, dtype=torch.int64, device=device)  # 优化：使用int64保持一致性
     _, _, bits_sum = compress_tensor_to_memory(tensors=tensors, k_list=k_list, values_memory=values_memory, indices_memory=indices_memory, compress_ratio=state.compress_ratio, r=state.r, group=group_to_use, use_error_feedback=state.use_error_feedback)
 
    

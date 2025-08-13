@@ -33,7 +33,7 @@ for TASK_NAME in cola;do
                     --with_tracking \
                     --report_to wandb \
                     --compress_ratio 0.2 \
-                    --r 4
+                    --col_rank 4
             done
         done
     done
@@ -57,7 +57,7 @@ for TASK_NAME in cola;do
                     --with_tracking \
                     --report_to wandb \
                     --compress_ratio 0.2 \
-                    --r 4
+                    --col_rank 4
             done
         done
     done
@@ -80,7 +80,7 @@ done
 #                     --with_tracking \
 #                     --report_to wandb \
 #                     --compress_ratio 0.2 \
-#                     --r 4
+#                     --col_rank 4
 #             done
 #         done
 #     done

@@ -76,12 +76,12 @@ parser.add_argument('--weight_decay', type=float, default=5e-4, help="Weight dec
 parser.add_argument("--per_device_train_batch_size", type=int, default=8, help="Batch size (per device) for the training dataloader.",)
 
 parser.add_argument('--use_wandb', default=0, type=int, help='use wandb or not')
-parser.add_argument('--col_rank', default=0, type=int, help=' "--r" is ambiguous while use "torchrun" instead of "accelerate", so use "--col_rank" instead of "--r" ')
+parser.add_argument('--col_rank', default=0, type=int, help=' "--col_rank" is ambiguous while use "torchrun" instead of "accelerate", so use "--col_rank" instead of "--col_rank" ')
 
 ###
 add_comm_hook_args(parser) 
 args = parser.parse_args()
-args.r=args.col_rank
+args.col_rank=args.col_rank
 init_distributed_mode(args)
 
 supported_optimizers = ['adamw', 'sgd']
@@ -94,7 +94,7 @@ if args.rank == 0 and args.use_wandb:
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
                 project=f"cifar10_resnet18_group_topk_{args.use_error_feedback}", 
-                name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
+                name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.col_rank}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(
@@ -105,7 +105,7 @@ if args.rank == 0 and args.use_wandb:
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
                 project=f"msgd_cifar10_resnet18_group_topk_{args.use_error_feedback}", 
-                name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
+                name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.col_rank}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(

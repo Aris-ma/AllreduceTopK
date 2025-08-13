@@ -109,7 +109,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
         from comm_hooks.group_topk_hook_no_reshape import group_topk_hook, GroupTopKState
         hook_state = GroupTopKState(
             process_group=process_group, 
-            r=args.r, 
+            r=args.col_rank, 
             use_error_feedback=args.use_error_feedback, 
             seed=args.seed,
             start_compress_iter=args.start_compress_iter,
@@ -176,7 +176,7 @@ def add_comm_hook_args(parser):
     )
     
     parser.add_argument(
-        "--r", 
+        "--col_rank", 
         type=int,
         default=4,
         help="num of cols after projection.",
@@ -215,7 +215,7 @@ def name_func_glue(args):
             if args.compress_ratio==0.08:
                 if args.compressor=="group_topk_no_reshape":
                     program_name = f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                    run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_r{args.r}"
+                    run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_r{args.col_rank}"
                     
                 else:  # args.compressor=topk
                     program_name = f"glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
@@ -224,7 +224,7 @@ def name_func_glue(args):
             else:   # compress_ratio=0.2
                 if args.compressor=="group_topk_no_reshape":
                     program_name = f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                    run_name = f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_r{args.r}_ratio{args.compress_ratio}"
+                    run_name = f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_r{args.col_rank}_ratio{args.compress_ratio}"
                     
                 else:  # args.compressor=topk
                     program_name = f"glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
@@ -234,7 +234,7 @@ def name_func_glue(args):
             if args.compress_ratio==0.08:
                 if args.compressor=="group_topk_no_reshape":
                     program_name = f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                    run_name = f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}"
+                    run_name = f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.col_rank}"
                     
                 else:  # args.compressor=topk
                     program_name = f"glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
@@ -243,7 +243,7 @@ def name_func_glue(args):
             else:   # compress_ratio=0.2
                 if args.compressor=="group_topk_no_reshape":
                     program_name = f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                    run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
+                    run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.col_rank}_ratio{args.compress_ratio}"
                     
                 else:  # args.compressor=topk
                     program_name = f"glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
@@ -254,7 +254,7 @@ def name_func_glue(args):
         if args.compress_ratio==0.08:
             if args.compressor=="group_topk_no_reshape":
                 program_name = f"msgd_glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_mo{args.momentum}_r{args.r}"
+                run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_mo{args.momentum}_r{args.col_rank}"
                 
             else:
                 program_name = f"msgd_glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
@@ -263,7 +263,7 @@ def name_func_glue(args):
         else: 
             if args.compressor=="group_topk_no_reshape":
                 program_name = f"msgd_glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}"
-                run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_mo{args.momentum}_r{args.r}_ratio{args.compress_ratio}"
+                run_name =f"lr{args.learning_rate}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_mo{args.momentum}_r{args.col_rank}_ratio{args.compress_ratio}"
                 
             else:
                 program_name = f"msgd_glue_no_trainer_{args.task_name}_{args.compressor}_{args.use_error_feedback}"
