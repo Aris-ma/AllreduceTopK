@@ -1,4 +1,4 @@
-'''Train CIFAR10 with PyTorch.'''
+'''Train CIFAR100 with PyTorch.'''
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -62,7 +62,7 @@ def init_distributed_mode(args):
 
 
 # 输入参数
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser = argparse.ArgumentParser(description='PyTorch CIFAR100 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 # parser.add_argument('--resume', action='store_true',help='resume from checkpoint')
 
@@ -78,6 +78,12 @@ parser.add_argument("--per_device_train_batch_size", type=int, default=8, help="
 parser.add_argument('--use_wandb', default=0, type=int, help='use wandb or not')
 parser.add_argument('--col_rank', default=0, type=int, help=' "--r" is ambiguous while use "torchrun" instead of "accelerate", so use "--col_rank" instead of "--r" ')
 
+parser.add_argument(
+        "--gradient_accumulation_steps",  # 每多少个 batch 才执行一次 optimizer.step()梯度更新，用于显存不够时的梯度累积。实际上相当于扩大 batch size
+        type=int,
+        default=1,
+        help="Number of updates steps to accumulate before performing a backward/update pass.",
+    )
 ###
 add_comm_hook_args(parser) 
 args = parser.parse_args()
@@ -93,23 +99,23 @@ if args.rank == 0 and args.use_wandb:
     if args.optimizer=="adamw":
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
-                project=f"cifar10_resnet50_group_topk_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18_group_topk_{args.use_error_feedback}", 
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(
-                project=f"cifar10_resnet50_{args.compressor}_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18_{args.compressor}_{args.use_error_feedback}", 
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_ratio{args.compress_ratio}"
             )
     elif args.optimizer=="sgd":
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
-                project=f"msgd_cifar10_resnet50_group_topk_{args.use_error_feedback}", 
+                project=f"msgd_cifar100_resnet18_group_topk_{args.use_error_feedback}", 
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(
-                project=f"msgd_cifar10_resnet50_{args.compressor}_{args.use_error_feedback}", 
+                project=f"msgd_cifar100_resnet18_{args.compressor}_{args.use_error_feedback}", 
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_ratio{args.compress_ratio}"
             )
 
@@ -126,27 +132,27 @@ transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
 ])
 
 transform_test = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
 ])
 
 # 使用DistributedSampler
-trainset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=True, download=True, transform=transform_train)
+trainset = torchvision.datasets.CIFAR100(root='/home/mcy/data', train=True, download=True, transform=transform_train)
 train_sampler = DistributedSampler(trainset) # 多 GPU 分布式训练 中，为了让每个 GPU 处理不同的数据子集，必须使用 DistributedSampler，它会根据当前进程的 rank 和总进程数，把数据划分给不同进程。
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.per_device_train_batch_size, sampler=train_sampler, num_workers=2, pin_memory=True) # num_workers=2 是指在 当前 GPU/进程下，开两个子线程 用来加载数据（取决于CPU而不是GPU）
                                                                                                                                                         # pin_memory=True：加快 GPU 拷贝速度（一般训练时推荐开启）
 
-testset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=False, download=True, transform=transform_test)
+testset = torchvision.datasets.CIFAR100(root='/home/mcy/data', train=False, download=True, transform=transform_test)
 test_sampler = DistributedSampler(testset, shuffle=False) # 每轮测试集数据固定，结果才具有可比性和稳定性，方便观察模型随训练进展的性能变化
 testloader = torch.utils.data.DataLoader(testset, batch_size=args.per_device_train_batch_size, sampler=test_sampler, num_workers=2, pin_memory=True)
 
 # Model
 print(f"[Rank {args.rank} | Local Rank {args.local_rank}] Building model..")
-net = ResNet50().to(device)
+net = ResNet18(num_classes=100).to(device)
 # if args.resume:
 #     # Load checkpoint.
 #     print('==> Resuming from checkpoint..')
@@ -207,18 +213,39 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
+
+
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
-        optimizer.zero_grad()
-        outputs = net(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
+        # optimizer.zero_grad()
+        # outputs = net(inputs)
+        # loss = criterion(outputs, targets)
+        # loss.backward()
+        # optimizer.step()
 
-        _, predicted = outputs.max(1)  
-        temloss = torch.tensor(loss.item(), device="cuda")  # 当前这卡的 loss 标量，转换成张量放到 GPU 上
-        temtotal = torch.tensor(targets.size(0), device="cuda")  # 当前这卡上本轮的样本数
-        temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device="cuda")  # 当前这卡上预测对的样本数
+        # 判断当前小 batch 是否是该累积组的最后一步
+        is_last_step = ((batch_idx + 1) % args.gradient_accumulation_steps == 0) or (batch_idx == len(trainloader) - 1)
+
+        # 如果不是最后一步，使用 no_sync() 来避免 DDP 每次 backward 都做同步
+        if hasattr(net, "no_sync") and not is_last_step:
+            ctx = net.no_sync()
+        else:
+            # 占位上下文，便于统一写法
+            class _DummyCtx:
+                def __enter__(self): return None
+                def __exit__(self, *args): return False
+            ctx = _DummyCtx()
+
+        with ctx: # 每个小 batch 都会执行
+            outputs = net(inputs)
+            batch_loss = criterion(outputs, targets)   # CrossEntropy 默认按 batch 平均（即每个样本的平均 loss）
+            loss_for_backward = batch_loss / args.gradient_accumulation_steps    # 累积时对 backward 做缩放，梯度在模型参数上被累积了4次（每次1/4），总和就相当于整合了4个小 batch 的梯度。
+            loss_for_backward.backward() # 梯度是累积的（loss.backward()多次调用时，梯度会加到.grad 上，一直到optimizer.zero_grad清零）
+
+        _, predicted = outputs.max(1) 
+        temloss = torch.tensor(batch_loss.item(), device=device)  # 后面会除以len(trainloader)所以用batch_loss
+        temtotal = torch.tensor(targets.size(0), device=device)  # 当前这卡上本轮的样本数
+        temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device=device)  # 当前这卡上预测对的样本数
 
         dist.all_reduce(temloss, op=dist.ReduceOp.SUM)  
         temloss = temloss / args.world_size
@@ -229,6 +256,11 @@ def train(epoch):
             train_loss += temloss.detach().item()
             total += temtotal.item()
             correct += temcorrect.item()
+        
+        # 累积完成时更新并清零梯度
+        if is_last_step:
+            optimizer.step() # 只有在这args.gradient_accumulation_steps 个小batch都执行完后（也就是第args.gradient_accumulation_steps个小 batch的反向传播结束后），才执行 optimizer.step()
+            optimizer.zero_grad()
             
     if args.rank==0:
         avg_loss = train_loss / len(trainloader)
@@ -261,9 +293,9 @@ def test(epoch):
             loss = criterion(outputs, targets)
 
             _, predicted = outputs.max(1)
-            temloss=torch.tensor(loss.item(),device="cuda")
-            temtotal=torch.tensor(targets.size(0),device="cuda")
-            temcorrect=torch.tensor(predicted.eq(targets).sum().item(),device="cuda")
+            temloss=torch.tensor(loss.item(),device=device)
+            temtotal=torch.tensor(targets.size(0),device=device)
+            temcorrect=torch.tensor(predicted.eq(targets).sum().item(),device=device)
 
             dist.all_reduce(temloss, op=dist.ReduceOp.SUM)
             temloss = temloss / args.world_size
@@ -271,7 +303,7 @@ def test(epoch):
             dist.all_reduce(temcorrect, op=dist.ReduceOp.SUM)
 
             if args.rank==0:
-                test_loss += temloss.detach().item() 
+                test_loss += temloss.detach().item()  
                 total += temtotal.item()
                 correct += temcorrect.item()
 
@@ -300,7 +332,7 @@ def test(epoch):
     
 
 if __name__ == '__main__':
-    start_time = time.time()  # 开始计时
+    # start_time = time.time()  # 开始计时
     print('训练开始！！！！！')
     
 
@@ -314,16 +346,16 @@ if __name__ == '__main__':
         test(epoch)
         scheduler.step()
 
-    end_time = time.time()  # 结束计时
+    # end_time = time.time()  # 结束计时
     print('训练结束！！！！！')
-    total_seconds = end_time - start_time
-    minutes, seconds = divmod(int(total_seconds), 60)
+    # total_seconds = end_time - start_time
+    # minutes, seconds = divmod(int(total_seconds), 60)
 
-    logger.info(f"Total training time: {minutes:02} :{seconds:02} ") 
+    # logger.info(f"Total training time: {minutes:02} :{seconds:02} ") 
 
-    if args.rank == 0:
-        wandb.log({
-            "total_training_time": Html(f"<p>{minutes:02}:{seconds:02}</p>"),
-            "total_training_time_minutes": minutes + seconds / 60,  
-        })
+    # if args.rank == 0:
+    #     wandb.log({
+    #         "total_training_time": Html(f"<p>{minutes:02}:{seconds:02}</p>"),
+    #         "total_training_time_minutes": minutes + seconds / 60,  
+    #     })
     dist.destroy_process_group()

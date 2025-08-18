@@ -525,7 +525,7 @@ def main():
     # Compressor
     process_group = dist.distributed_c10d._get_default_group()
     logger.info(f"args.compressor is {args.compressor}----------------------------------------------")
-    register_comm_hook_for_ddp_model(model, process_group, args, optimizer=optimizer)
+    hook_state = register_comm_hook_for_ddp_model(model, process_group, args, optimizer=optimizer)
 
     # Figure out how many steps we should save the Accelerator states
     checkpointing_steps = args.checkpointing_steps
@@ -542,7 +542,7 @@ def main():
         program_name, run_name = name_func_glue(args)
         accelerator.init_trackers(
             # f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}", 
-            program_name, 
+            f"glue_no_trainer_{args.task_name}_bits",
             experiment_config,
             init_kwargs={"wandb": {"name": run_name}} 
             )
@@ -566,8 +566,7 @@ def main():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     # Only show the progress bar once on each machine.
-    # progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
-    progress_bar = tqdm(range(100), disable=not accelerator.is_local_main_process)
+    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
     starting_epoch = 0
     # Potentially load in the weights and states from a previous save
@@ -617,44 +616,26 @@ def main():
         else:
             active_dataloader = train_dataloader
 
+
         for step, batch in enumerate(active_dataloader):
-            if completed_steps >= 100:  # 达到指定迭代次数后退出
-                break
-            if completed_steps == 0:
-                print('计时开始！！！！！')
-                start_profile_time = time.time()
             
             outputs = model(**batch)
             loss = outputs.loss
             # We keep track of the loss at each epoch
             if args.with_tracking:
                 total_loss += loss.detach().float()
-            loss = loss / args.gradient_accumulation_steps
-            accelerator.backward(loss) # accelerator自动处理分布式反向传播
+            avg_loss = loss / args.gradient_accumulation_steps
+            accelerator.backward(avg_loss) # accelerator自动处理分布式反向传播
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
-                if args.check_grad: # 检查梯度是否相等
+                if args.check_grad: # 聚合所有节点的梯度后取平均，再保险地检查梯度是否相等
                     check_grad_identity(model)
                 lr_scheduler.step()
                 optimizer.zero_grad()
                 progress_bar.update(1) 
                 completed_steps += 1
 
-                # peak_memory = torch.cuda.max_memory_allocated() / (1024 * 1024)
                 
-              
-                # if args.with_tracking :
-                #     accelerator.log(
-                #         {
-                #             "loss": loss.item(),
-                #             "learning_rate": optimizer.param_groups[0]["lr"],  
-                #             "weight_decay": optimizer.param_groups[0]["weight_decay"],
-                #             "peak_memory_MB": peak_memory,
-                #         },
-                #         step=completed_steps,
-                #     )
-                # logger.info(f"step {completed_steps}, loss: {loss.item()}, lr: {optimizer.param_groups[0]['lr']}, peak_memory_MB: {peak_memory}")
-
             if isinstance(checkpointing_steps, int):
                 if completed_steps % checkpointing_steps == 0:
                     output_dir = f"step_{completed_steps}"
@@ -665,55 +646,56 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-            ###
-            if args.with_tracking and accelerator.is_main_process:
-                #### 时间：
-                if completed_steps == 100:
-                    end_profile_time = time.time()
-                    avg_iter_time = (end_profile_time - start_profile_time)/100
-                    logger.info(f"[Profile]Average iteration time over {100} iters:{avg_iter_time:.6f} seconds")
-                    if args.with_tracking:
-                        accelerator.log({"avg_iter_time_first_100)": wandb.Html(f"<p>Time: {avg_iter_time}</p>")})
-                    print('计时结束！！！！！')
+            ####
+            if args.with_tracking and accelerator.is_main_process: # 每个iter都要加一下
+                accelerator.log(
+                    {
+                        "iter_loss": loss.item(),
+                        "step": completed_steps,
+                        "iter_train_comm_bits":getattr(hook_state, 'comm_bits_this_round', 0),
+                    },
+                    step=completed_steps,
+                )  
 
-        # model.eval()
-        # samples_seen = 0
-        # for step, batch in enumerate(eval_dataloader): 
-        #     with torch.no_grad():
-        #         outputs = model(**batch)
-        #     predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
+        model.eval()
+        samples_seen = 0
+        for step, batch in enumerate(eval_dataloader): 
+            with torch.no_grad():
+                outputs = model(**batch)
+            predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
 
-        #     if args.task_name == "mnli":
-        #         predictions = accelerator.gather_for_metrics(predictions)
-        #         references = accelerator.gather_for_metrics(batch["labels"])
-        #     else:
-        #         predictions, references = accelerator.gather((predictions, batch["labels"])) # accelerator进行跨进程的数据聚合
-        #         # If we are in a multiprocess environment, the last batch has duplicates
-        #         if accelerator.num_processes > 1:
-        #             if step == len(eval_dataloader) - 1:
-        #                 predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
-        #                 references = references[: len(eval_dataloader.dataset) - samples_seen]
-        #             else:
-        #                 samples_seen += references.shape[0]
+            if args.task_name == "mnli":
+                predictions = accelerator.gather_for_metrics(predictions)
+                references = accelerator.gather_for_metrics(batch["labels"])
+            else:
+                predictions, references = accelerator.gather((predictions, batch["labels"])) # accelerator进行跨进程的数据聚合
+                # If we are in a multiprocess environment, the last batch has duplicates
+                if accelerator.num_processes > 1:
+                    if step == len(eval_dataloader) - 1:
+                        predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
+                        references = references[: len(eval_dataloader.dataset) - samples_seen]
+                    else:
+                        samples_seen += references.shape[0]
 
-        #     metric.add_batch(
-        #         predictions=predictions,
-        #         references=references,
-        #     )
+            metric.add_batch(
+                predictions=predictions,
+                references=references,
+            )
 
-        # eval_metric = metric.compute()
-        # logger.info(f"epoch {epoch}: {eval_metric}") 
+        eval_metric = metric.compute()
+        logger.info(f"epoch {epoch}: {eval_metric}") 
 
-        # if args.with_tracking:    
-        #     accelerator.log(
-        #         {
-        #             "accuracy" if args.task_name is not None else "glue": eval_metric,
-        #             "train_loss": total_loss.item() / len(train_dataloader),
-        #             "epoch": epoch,
-        #             "step": completed_steps,
-        #         },
-        #         step=completed_steps,
-        #     )
+        if args.with_tracking and accelerator.is_main_process:   ####    
+            accelerator.log(
+                {
+                    "accuracy" if args.task_name is not None else "glue": eval_metric,
+                    "train_loss": total_loss.item() / len(train_dataloader),
+                    "epoch": epoch,
+                    "step": completed_steps,
+                    "train_comm_bits":int(getattr(hook_state, 'comm_bits_this_round', 0)),
+                },
+                step=completed_steps,
+            )
 
 
         if args.checkpointing_steps == "epoch":

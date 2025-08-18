@@ -274,6 +274,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    best_acc=0
 
     
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -540,11 +541,15 @@ def main():
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
         
         program_name, run_name = name_func_glue(args)
+
+        global_bs = args.gradient_accumulation_steps * dist.get_world_size() * args.per_device_train_batch_size
+
         accelerator.init_trackers(
             # f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}", 
-            program_name, 
+            # program_name, 
+            f"glue_no_trainer_{args.task_name}",
             experiment_config,
-            init_kwargs={"wandb": {"name": run_name}} 
+            init_kwargs={"wandb": {"name": run_name + f"_global_bs{global_bs}"}} 
             )
         
 
@@ -626,7 +631,7 @@ def main():
             accelerator.backward(loss) # accelerator自动处理分布式反向传播
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
-                if args.check_grad: # 检查梯度是否相等
+                if args.check_grad: # 聚合所有节点的梯度后取平均，再保险地检查梯度是否相等
                     check_grad_identity(model)
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -685,17 +690,32 @@ def main():
 
         eval_metric = metric.compute()
         logger.info(f"epoch {epoch}: {eval_metric}")  
+        if args.task_name == "cola":
+            if eval_metric['matthews_correlation']>best_acc:
+                best_acc = eval_metric['matthews_correlation']
 
-        if args.with_tracking:    
-            accelerator.log(
-                {
-                    "accuracy" if args.task_name is not None else "glue": eval_metric,
-                    "train_loss": total_loss.item() / len(train_dataloader),
-                    "epoch": epoch,
-                    "step": completed_steps,
-                },
-                step=completed_steps,
-            )
+            if args.with_tracking:    
+                accelerator.log(
+                    {
+                        "accuracy" if args.task_name is not None else "glue": eval_metric,
+                        "train_loss": total_loss.item() / len(train_dataloader),
+                        "epoch": epoch,
+                        "step": completed_steps,
+                        "best_acc":best_acc,
+                    },
+                    step=completed_steps,
+                )
+        else:
+            if args.with_tracking:    
+                accelerator.log(
+                    {
+                        "accuracy" if args.task_name is not None else "glue": eval_metric,
+                        "train_loss": total_loss.item() / len(train_dataloader),
+                        "epoch": epoch,
+                        "step": completed_steps,
+                    },
+                    step=completed_steps,
+                )
 
 
         if args.checkpointing_steps == "epoch":

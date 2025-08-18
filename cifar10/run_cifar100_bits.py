@@ -1,4 +1,4 @@
-'''Train CIFAR10 with PyTorch.'''
+'''Train CIFAR100 with PyTorch.'''
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -37,8 +37,17 @@ logging.basicConfig(level=logging.INFO)
 os.environ["WANDB_API_KEY"] = "0f2bf1daed22671b7865ab947c9cbc917de7f80e"
 os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 
+
 ###
-from comm_hooks.utils import register_comm_hook_for_ddp_model, add_comm_hook_args
+from comm_hooks.utils_norms import register_comm_hook_for_ddp_model, add_comm_hook_args, dtype_bits, tensor_bits
+
+# import os
+# from torchvision import datasets
+
+# data_path = '/home/mcy/data'
+# if not os.path.exists(os.path.join(data_path, 'cifar-100-batches-py')):
+#     print("Downloading CIFAR-100 dataset...")
+#     datasets.CIFAR100(root=data_path, train=True, download=True)
 
 
 # 初始化分布式环境
@@ -62,7 +71,7 @@ def init_distributed_mode(args):
 
 
 # 输入参数
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser = argparse.ArgumentParser(description='PyTorch CIFAR100 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 # parser.add_argument('--resume', action='store_true',help='resume from checkpoint')
 
@@ -79,7 +88,7 @@ parser.add_argument('--use_wandb', default=0, type=int, help='use wandb or not')
 parser.add_argument('--col_rank', default=0, type=int, help=' "--r" is ambiguous while use "torchrun" instead of "accelerate", so use "--col_rank" instead of "--r" ')
 
 ###
-add_comm_hook_args(parser) 
+add_comm_hook_args(parser)
 args = parser.parse_args()
 args.r=args.col_rank
 init_distributed_mode(args)
@@ -93,30 +102,34 @@ if args.rank == 0 and args.use_wandb:
     if args.optimizer=="adamw":
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
-                project=f"cifar10_resnet50_group_topk_{args.use_error_feedback}", 
+                #project=f"cifar100_resnet18_group_topk_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18", 
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(
-                project=f"cifar10_resnet50_{args.compressor}_{args.use_error_feedback}", 
+                #project=f"cifar100_resnet18_{args.compressor}_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18",
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_ratio{args.compress_ratio}"
             )
     elif args.optimizer=="sgd":
         if args.compressor=="group_topk_no_reshape":
             wandb.init(
-                project=f"msgd_cifar10_resnet50_group_topk_{args.use_error_feedback}", 
+                #project=f"msgd_cifar100_resnet18_group_topk_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18",
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_r{args.r}_ratio{args.compress_ratio}"
             )
         else:
             wandb.init(
-                project=f"msgd_cifar10_resnet50_{args.compressor}_{args.use_error_feedback}", 
+                #project=f"msgd_cifar100_resnet18_{args.compressor}_{args.use_error_feedback}", 
+                project=f"cifar100_resnet18",
                 name=f"atomo_lr{args.lr}_bs{args.per_device_train_batch_size}_seed{args.seed}_{args.compressor}_{args.use_error_feedback}_wd{args.weight_decay}_ratio{args.compress_ratio}"
             )
 
 
 
 
-device = torch.device(f"cuda:{args.local_rank}") # 使用local_rank指定GPU
+device = torch.device(f"cuda:{args.local_rank}") 
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
@@ -126,27 +139,27 @@ transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
 ])
 
 transform_test = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
 ])
 
 # 使用DistributedSampler
-trainset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=True, download=True, transform=transform_train)
+trainset = torchvision.datasets.CIFAR100(root='/home/mcy/data', train=True, download=True, transform=transform_train)
 train_sampler = DistributedSampler(trainset) # 多 GPU 分布式训练 中，为了让每个 GPU 处理不同的数据子集，必须使用 DistributedSampler，它会根据当前进程的 rank 和总进程数，把数据划分给不同进程。
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.per_device_train_batch_size, sampler=train_sampler, num_workers=2, pin_memory=True) # num_workers=2 是指在 当前 GPU/进程下，开两个子线程 用来加载数据（取决于CPU而不是GPU）
                                                                                                                                                         # pin_memory=True：加快 GPU 拷贝速度（一般训练时推荐开启）
 
-testset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=False, download=True, transform=transform_test)
-test_sampler = DistributedSampler(testset, shuffle=False) # 每轮测试集数据固定，结果才具有可比性和稳定性，方便观察模型随训练进展的性能变化
+testset = torchvision.datasets.CIFAR100(root='/home/mcy/data', train=False, download=True, transform=transform_test)
+test_sampler = DistributedSampler(testset, shuffle=False) # shuffle=False：每轮测试集数据固定，结果才具有可比性和稳定性，方便观察模型随训练进展的性能变化
 testloader = torch.utils.data.DataLoader(testset, batch_size=args.per_device_train_batch_size, sampler=test_sampler, num_workers=2, pin_memory=True)
 
 # Model
 print(f"[Rank {args.rank} | Local Rank {args.local_rank}] Building model..")
-net = ResNet50().to(device)
+net = ResNet18(num_classes=100).to(device)
 # if args.resume:
 #     # Load checkpoint.
 #     print('==> Resuming from checkpoint..')
@@ -181,16 +194,16 @@ elif args.optimizer == 'sgd':  # msgd(NAG)
 
 # Compressor
 process_group = dist.distributed_c10d._get_default_group()
-register_comm_hook_for_ddp_model(net, process_group, args, optimizer=optimizer)
+hook_state = register_comm_hook_for_ddp_model(net, process_group, args, optimizer=optimizer)
 
 # lr_scheduler
 if args.optimizer == "adamw":
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_train_epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_train_epochs)
     milestone=0.1 * args.num_train_epochs
-    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=milestone) 
+    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=milestone)
     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=args.num_train_epochs-milestone) # T_max 表示余弦周期是多少个epoch
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[milestone]) # milestone 表示前milestone个epoch用warmup_scheduler，之后用cosine_scheduler
-
+    
 elif args.optimizer == 'sgd':  # msgd(NAG)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
 
@@ -198,7 +211,7 @@ elif args.optimizer == 'sgd':  # msgd(NAG)
 
 
 # Training
-def train(epoch):
+def train(epoch, hook_state):
     if args.rank == 0:
         logger.info(f"\n[Epoch {epoch+1}/{args.num_train_epochs}] Training...")
 
@@ -207,7 +220,20 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
+    comm_bits_this_round = 0
+    
+
+    
+
     for batch_idx, (inputs, targets) in enumerate(trainloader):
+        # if hook_state.iter >= bits_iters:  # 达到指定迭代次数后退出
+        #     break
+
+        # if hook_state.iter == 0:
+        #     print('计时开始！！！！！')
+        #     start_profile_time = time.time()
+            
+
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs)
@@ -216,34 +242,69 @@ def train(epoch):
         optimizer.step()
 
         _, predicted = outputs.max(1)  
-        temloss = torch.tensor(loss.item(), device="cuda")  # 当前这卡的 loss 标量，转换成张量放到 GPU 上
-        temtotal = torch.tensor(targets.size(0), device="cuda")  # 当前这卡上本轮的样本数
-        temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device="cuda")  # 当前这卡上预测对的样本数
+        temloss=torch.tensor(loss.item(),device="cuda")
+        temtotal=torch.tensor(targets.size(0),device="cuda")
+        temcorrect=torch.tensor(predicted.eq(targets).sum().item(),device="cuda")
 
-        dist.all_reduce(temloss, op=dist.ReduceOp.SUM)  
+        dist.all_reduce(temloss, op=dist.ReduceOp.SUM)
         temloss = temloss / args.world_size
         dist.all_reduce(temtotal, op=dist.ReduceOp.SUM)
         dist.all_reduce(temcorrect, op=dist.ReduceOp.SUM)
 
+        
         if args.rank==0:
+
             train_loss += temloss.detach().item()
             total += temtotal.item()
             correct += temcorrect.item()
             
+            # #### 时间：
+            # if hook_state.iter == profile_iters - 1:
+            #     end_profile_time = time.time()
+            #     avg_iter_time = (end_profile_time - start_profile_time)/profile_iters
+            #     logger.info(f"[Profile]Average iteration time over {profile_iters} iters:{avg_iter_time:.6f} seconds")
+            #     if args.use_wandb:
+            #         wandb.log({"avg_iter_time_first_100)": wandb.Html(f"<p>Time: {avg_iter_time}</p>")})
+            #     print('计时结束！！！！！')
+                    
+            #### bits：
+            # 访问通信比特数
+            comm_bits_this_round += getattr(hook_state, 'comm_bits_this_round', 0)
+
+            # temacc = 100. * temcorrect / temtotal
+            # logger.info(f"[iter_step {hook_state.iter}] Train Iteration Loss: {global_avg_loss.item():.3f}  | TemAcc: {temacc:.3f}% (temcorrect: {temcorrect}/temtotal: {temtotal})")
+
+            # if args.use_wandb:
+            #     wandb.log({
+            #         "train_loss_per_iteration": float(global_avg_loss),
+            #         "train_accuracy_per_iteration": float(temacc),
+            #         "iter_step": int(hook_state.iter),
+            #         "train_comm_bits":int(comm_bits_this_round),
+            #     },step=hook_state.iter)
+       
+                
+
+            
     if args.rank==0:
-        avg_loss = train_loss / len(trainloader)
+        avg_loss = train_loss / len(trainloader) # 一个epoch的平均loss
         acc = 100. * correct / total
         logger.info(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.3f} | Acc: {acc:.3f}% (correct: {correct}/total: {total})")
 
+        # if args.use_wandb:
+        #     wandb.log({
+        #         "train_loss": avg_loss,
+        #         "train_accuracy": acc,
+        #         "epoch": epoch,
+        #         "train_correct": correct,
+        #         "train_total": total,
+        #     },step=epoch)
         if args.use_wandb:
             wandb.log({
-                "train_loss": avg_loss,
-                "train_accuracy": acc,
+                "train_loss_per_epoch": float(avg_loss),
+                "train_accuracy_per_epoch": float(acc),
                 "epoch": epoch,
-                "train_correct": correct,
-                "train_total": total,
+                "train_comm_bits":int(comm_bits_this_round),
             },step=epoch)
-
 
 
 
@@ -300,30 +361,35 @@ def test(epoch):
     
 
 if __name__ == '__main__':
-    start_time = time.time()  # 开始计时
+    # start_time = time.time()  # 开始计时
+    
     print('训练开始！！！！！')
     
-
     if args.rank == 0:
         epoch_bar = tqdm(range(start_epoch, start_epoch + args.num_train_epochs), desc="Training Epochs")
     else:
         epoch_bar = range(start_epoch, start_epoch + args.num_train_epochs)
 
     for epoch in epoch_bar:
-        train(epoch)
-        test(epoch)
+        train(epoch, hook_state)
+        #test(epoch)
         scheduler.step()
+    
 
-    end_time = time.time()  # 结束计时
+
+
+    # end_time = time.time()  # 结束计时
+    
     print('训练结束！！！！！')
-    total_seconds = end_time - start_time
-    minutes, seconds = divmod(int(total_seconds), 60)
+    
+    # total_seconds = end_time - start_time
+    # minutes, seconds = divmod(int(total_seconds), 60)
 
-    logger.info(f"Total training time: {minutes:02} :{seconds:02} ") 
+    # logger.info(f"Total training time: {minutes:02} :{seconds:02} ")
 
-    if args.rank == 0:
-        wandb.log({
-            "total_training_time": Html(f"<p>{minutes:02}:{seconds:02}</p>"),
-            "total_training_time_minutes": minutes + seconds / 60,  
-        })
+    # if args.rank == 0:
+    #     wandb.log({
+    #         "total_training_time": wandb.Html(f"<p>Time: {minutes:02}:{seconds:02}</p>"),
+    #     })
+    
     dist.destroy_process_group()

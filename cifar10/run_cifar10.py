@@ -41,6 +41,14 @@ os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 from comm_hooks.utils import register_comm_hook_for_ddp_model, add_comm_hook_args
 
 
+# import os
+# from torchvision import datasets
+
+# data_path = '/home/mcy/data'
+# if not os.path.exists(os.path.join(data_path, 'cifar-10-batches-py')):
+#     print("Downloading CIFAR-10 dataset...")
+#     datasets.CIFAR10(root=data_path, train=True, download=True)
+
 # 初始化分布式环境
 def init_distributed_mode(args):
     args.rank = int(os.environ['RANK'])
@@ -135,12 +143,12 @@ transform_test = transforms.Compose([
 ])
 
 # 使用DistributedSampler
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+trainset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=True, download=True, transform=transform_train)
 train_sampler = DistributedSampler(trainset) # 多 GPU 分布式训练 中，为了让每个 GPU 处理不同的数据子集，必须使用 DistributedSampler，它会根据当前进程的 rank 和总进程数，把数据划分给不同进程。
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.per_device_train_batch_size, sampler=train_sampler, num_workers=2, pin_memory=True) # num_workers=2 是指在 当前 GPU/进程下，开两个子线程 用来加载数据（取决于CPU而不是GPU）
                                                                                                                                                         # pin_memory=True：加快 GPU 拷贝速度（一般训练时推荐开启）
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+testset = torchvision.datasets.CIFAR10(root='/home/mcy/data', train=False, download=True, transform=transform_test)
 test_sampler = DistributedSampler(testset, shuffle=False) # 每轮测试集数据固定，结果才具有可比性和稳定性，方便观察模型随训练进展的性能变化
 testloader = torch.utils.data.DataLoader(testset, batch_size=args.per_device_train_batch_size, sampler=test_sampler, num_workers=2, pin_memory=True)
 
@@ -183,17 +191,17 @@ elif args.optimizer == 'sgd':  # msgd(NAG)
 process_group = dist.distributed_c10d._get_default_group()
 register_comm_hook_for_ddp_model(net, process_group, args, optimizer=optimizer)
 
-# # lr_scheduler
-# if args.optimizer == "adamw":
-#     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_train_epochs)
-#     milestone=0.1 * args.num_train_epochs
-#     warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=milestone) 
-#     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=args.num_train_epochs-milestone) # T_max 表示余弦周期是多少个epoch
-#     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[milestone]) # milestone 表示前milestone个epoch用warmup_scheduler，之后用cosine_scheduler
+# lr_scheduler
+if args.optimizer == "adamw":
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_train_epochs)
+    milestone=0.1 * args.num_train_epochs
+    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=milestone) 
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=args.num_train_epochs-milestone) # T_max 表示余弦周期是多少个epoch
+    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[milestone]) # milestone 表示前milestone个epoch用warmup_scheduler，之后用cosine_scheduler
 
-# elif args.optimizer == 'sgd':  # msgd(NAG)
-#     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
-scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
+elif args.optimizer == 'sgd':  # msgd(NAG)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150], gamma=0.1)
+
 
 
 
@@ -221,6 +229,7 @@ def train(epoch):
         temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device="cuda")  # 当前这卡上预测对的样本数
 
         dist.all_reduce(temloss, op=dist.ReduceOp.SUM)  
+        temloss = temloss / args.world_size
         dist.all_reduce(temtotal, op=dist.ReduceOp.SUM)
         dist.all_reduce(temcorrect, op=dist.ReduceOp.SUM)
 
@@ -265,6 +274,7 @@ def test(epoch):
             temcorrect=torch.tensor(predicted.eq(targets).sum().item(),device="cuda")
 
             dist.all_reduce(temloss, op=dist.ReduceOp.SUM)
+            temloss = temloss / args.world_size
             dist.all_reduce(temtotal, op=dist.ReduceOp.SUM)
             dist.all_reduce(temcorrect, op=dist.ReduceOp.SUM)
 

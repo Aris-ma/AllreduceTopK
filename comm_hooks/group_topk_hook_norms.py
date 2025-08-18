@@ -45,20 +45,17 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         n = tensor.shape[0]
         m = tensor.shape[1]
         k = max(1, int(n * compress_ratio))
-    
-        V = torch.randn(m, r, device=tensor.device)
-        # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
-        P_local = tensor @ V     # shape: [n, r]
-    
+        
+        norms = torch.sum(tensor ** 2, dim=1)  # [n]
+        P_local = norms
         # AllReduce to get global projection P
         P = P_local.clone()
         P_bits = tensor_bits(P)
         dist.all_reduce(P, group=group)
         P /= dist.get_world_size(group)
 
-        # Compute squared norm per row
-        norms = torch.sum(P ** 2, dim=1)  # [n]
-        _, topk_indices = torch.topk(norms, k=k, largest=True, sorted=False)
+        _, topk_indices = torch.topk(P, k=k, largest=True, sorted=False)
+        
         row_offset = topk_indices.view(-1, 1) * m  # [k, 1]
         col_indices = torch.arange(m, device=tensor.device).view(1, -1)  # [1, m]
         indices = (row_offset + col_indices).flatten()  # shape: [k * m]
@@ -73,20 +70,17 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         n = d // m
         tensor_2D = tensor.reshape(n, m)
         k = max(1, int(n * compress_ratio))
-    
-        V = torch.randn(m, r, device=tensor.device)
-        # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
-        P_local = tensor_2D @ V     # shape: [n, r]
-    
+        
+        norms = torch.sum(tensor_2D ** 2, dim=1)  # [n]
+        P_local = norms
         # AllReduce to get global projection P
         P = P_local.clone()
         P_bits = tensor_bits(P)
         dist.all_reduce(P, group=group)
         P /= dist.get_world_size(group)
 
-        # Compute squared norm per row
-        norms = torch.sum(P ** 2, dim=1)  # [n]
-        _, topk_indices = torch.topk(norms, k=k, largest=True, sorted=False)
+        _, topk_indices = torch.topk(P, k=k, largest=True, sorted=False)
+        
         row_offset = topk_indices.view(-1, 1) * m  # [k, 1]
         col_indices = torch.arange(m, device=tensor.device).view(1, -1)  # [1, m]
         indices = (row_offset + col_indices).flatten()  # shape: [k * m]
