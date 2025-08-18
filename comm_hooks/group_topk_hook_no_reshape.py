@@ -77,6 +77,8 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group, use_determin
             V.normal_()
         
         P_local = tensor_2D @ V     # shape: [n, r]
+        # TODO: 需要改回来
+        # P_local = torch.norm(tensor_2D, dim=1, keepdim=True) # shape: [n, 1]
         P_bits = tensor_bits(P_local)
         
         # AllReduce operation
@@ -349,4 +351,77 @@ def group_topk_hook(
 
 
 
+def fake_group_topk_hook(
+    state: GroupTopKState, bucket: dist.GradBucket
+) -> torch.futures.Future[torch.Tensor]:
+    # bucket.buffer()  Gradient: a one-dimensional tensor
+    # bucket.gradients()  Gradient list layer by layer
+    # bucket.parameters() Parameters
+    # bucket.is_last()  Is this the last buffer
+    # bucket.index()    Index of the buffer
 
+    # check if the key is ready in precond adam
+    state.maybe_accumulate_momentum_on_bucket(bucket)
+
+    process_group = state.process_group
+    group_to_use = process_group if process_group is not None else dist.group.WORLD
+    world_size = group_to_use.size()
+    rank = dist.get_rank(group=group_to_use) # 获取 当前进程 在 group_to_use 这个通信组中的 rank。（process_group 就是指的只有一个通信组）
+
+    # The input tensor is a flattened 1D tensor.
+    input_tensor = bucket.buffer()  
+    tensors = bucket.gradients() 
+ 
+    # Run vanilla allreduce in the first `start_compress_iter` iterations.
+    if state.iter < state.start_compress_iter:
+        state.maybe_increase_iter(bucket)
+        return default_hooks._allreduce_fut(group_to_use, input_tensor, state)
+    
+    # 新增：压缩切换的平滑处理
+    if not state.compression_started:
+        state.compression_started = True
+        logger.info(f"Starting compression at iteration {state.iter} with gradual compression enabled: {state.gradual_compression}")
+        if state.use_error_feedback in ["ef14", "ef21"]:
+            logger.info("Initializing error feedback mechanism for smooth compression transition")
+    
+    # group_topk 压缩器压缩 -----------------------------------------------------------------------------------
+    device = tensors[0].device  
+    dtype = tensors[0].dtype
+
+    # 获取当前的压缩比（支持渐进式压缩）
+    current_compress_ratio = state.get_current_compress_ratio()
+
+    # allreduce
+    dist.all_reduce(input_tensor, group=group_to_use, async_op=False) # async_op=False 表示会阻塞程序执行，直到 all_reduce 完全完成。
+    
+    bucket_index = bucket.index() 
+    total_length = input_tensor.shape[0]
+    if state.use_error_feedback == "ef14":
+        if bucket_index in state.error_dict:
+            input_tensor.add_(state.error_dict[bucket_index], alpha=1.0) # input_tensor = \nabla F_i + E_{i-1}
+        else:
+            logger.info("A zero tensor of length %s that represents local error is created.", total_length)
+            state.error_dict[bucket_index] = torch.zeros(total_length, device=device, dtype=dtype)
+    
+    state.error_dict[bucket_index].copy_(input_tensor)  # E_i = \nabla F_i + E_{i-1}
+
+    for tensor in tensors:
+        if len(tensor.shape) == 2:
+            m, n = tensor.shape # [m, n]
+            k = max(1, int(m * current_compress_ratio))
+            V = torch.empty(n, state.r, dtype=dtype, device=device) # [n, r]
+            V.normal_(generator=state.rng)
+            sigma = torch.norm(tensor @ V, dim=1).abs() # [m, 1]
+            zero_indices = torch.argsort(sigma, descending=True)[k:]
+            tensor[zero_indices, :] = 0.0  # 将非top k的元素置为0
+        elif len(tensor.shape) > 2:
+            raise NotImplementedError("Fake Group TopK compression only supports 2D tensors.")
+    
+    state.error_dict[bucket_index].add_(input_tensor, alpha=-1.0)  # E_i = \nabla F_i + E_{i-1} - C[\nabla F_i + E_{i-1}]
+
+    state.maybe_increase_iter(bucket)
+
+    fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
+    fut.set_result(input_tensor)
+
+    return fut

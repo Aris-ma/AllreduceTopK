@@ -159,6 +159,49 @@ class SparseState(HookState):
         self.global_error_dict: Dict[int, torch.Tensor] = {}
         self.random_seed = random_seed
 
+        # 修复1: 预分配AllGather缓存，避免重复创建张量
+        self.allgather_cache = {}
+        
+        # 修复2: 内存清理计数器
+        self.memory_cleanup_interval = 100  # 每100个iteration清理一次内存
+        
+        # 修复3: 预分配随机种子，减少运行时开销
+        if self.random:
+            # 预生成足够多的随机种子
+            self.precomputed_seeds = torch.randint(0, 1_000_000_000, (10000,), generator=self.rng).tolist()
+            self.seed_idx = 0
+    
+    def get_or_create_allgather_cache(self, tensor, world_size, cache_key):
+        """获取或创建AllGather缓存，避免重复分配内存"""
+        if cache_key not in self.allgather_cache:
+            self.allgather_cache[cache_key] = [
+                torch.zeros_like(tensor) for _ in range(world_size)
+            ]
+        return self.allgather_cache[cache_key]
+    
+    def cleanup_memory_if_needed(self):
+        """定期清理内存，避免内存泄漏"""
+        if self.iter % self.memory_cleanup_interval == 0:
+            # 清理CUDA缓存
+            torch.cuda.empty_cache()
+            
+            # 限制错误字典的大小
+            if len(self.error_dict) > 10:  # 只保留最近10个bucket的错误
+                old_keys = list(self.error_dict.keys())[:-10]
+                for key in old_keys:
+                    del self.error_dict[key]
+                    if key in self.global_error_dict:
+                        del self.global_error_dict[key]
+    
+    def get_next_seed(self):
+        """获取下一个预计算的随机种子"""
+        if not self.random:
+            return None
+        
+        seed = self.precomputed_seeds[self.seed_idx % len(self.precomputed_seeds)]
+        self.seed_idx += 1
+        return seed
+
 
 def sparse_hook_sync(
     state: SparseState, bucket: dist.GradBucket
@@ -190,6 +233,10 @@ def sparse_hook_sync(
     # Run vanilla allreduce in the first `start_compress_iter` iterations.
     if state.iter < state.start_compress_iter:
         state.maybe_increase_iter(bucket)
+        
+        # 修复2: 定期清理内存，避免内存泄漏  
+        state.cleanup_memory_if_needed()
+        
         return default_hooks._allreduce_fut(group_to_use, input_tensor, state)
     
     # Apply sparse after `start_compress_iter` iterations.
@@ -221,6 +268,10 @@ def sparse_hook_sync(
             state.global_error_dict[bucket_index] = torch.clone(input_tensor).detach()
             # reset the full input tensor
             state.maybe_increase_iter(bucket) # 判断是否需要将当前迭代轮数 state.iter 加 1（有时一个迭代（state.iter）可能会对应多个 bucket，而我们只在所有 bucket 都完成一次同步后再加一次迭代数）
+            
+            # 修复2: 定期清理内存，避免内存泄漏
+            state.cleanup_memory_if_needed()
+            
             fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
             fut.set_result(input_tensor)
             return fut
@@ -228,10 +279,8 @@ def sparse_hook_sync(
     # 压缩:
     # seed 
     if state.random:    # 在每个通信 hook 调用前重新设定随机种子，以便保证使用 RandK 时，在不同 GPU 上压缩出的索引（即indices = torch.randperm(tensor.numel())[:k]这步每个GPU所得的结果一样）是一样的
-        seed = torch.randint(0, 1_000_000_000, (1,), generator=state.rng).item() 
-                        # 用固定的随机种子让所有 GPU 同步采样！！
-                        # state.rng	是构造时固定的 RNG 实例（torch.Generator()），通常在 rank 0 （即第一个GPU）上
-                        # torch.randint(..., generator=state.rng)	（在第一个GPU上）用可控 RNG 采样出一个 seed
+        # 修复3: 使用预计算的种子，减少运行时开销
+        seed = state.get_next_seed()
         torch.manual_seed(seed) # 把这个种子设置成 PyTorch 的全局种子，使得后续 randperm 一样
     
     # 构建压缩器、计算 k 值
@@ -278,8 +327,12 @@ def sparse_hook_sync(
         decompress_memory_to_tensor_and_aggregate(tensors, k_list, values_memory, indices_memory, aggregate=False)
     else:    
         # Allgather the values and indices
-        values_memory_allgather = _get_allgather_out_list(values_memory, world_size)
-        indices_memory_allgather = _get_allgather_out_list(indices_memory, world_size)
+        # 修复1: 使用缓存的tensor列表，避免重复分配内存
+        values_cache_key = f"values_{values_memory.shape}_{values_memory.dtype}"
+        indices_cache_key = f"indices_{indices_memory.shape}_{indices_memory.dtype}"
+        
+        values_memory_allgather = state.get_or_create_allgather_cache(values_memory, world_size, values_cache_key)
+        indices_memory_allgather = state.get_or_create_allgather_cache(indices_memory, world_size, indices_cache_key)
         
         state.comm_bits_this_round += (world_size -1) * world_size * bits_sum
         dist.all_gather(values_memory_allgather, values_memory, group=group_to_use, async_op=False)
@@ -297,6 +350,9 @@ def sparse_hook_sync(
         input_tensor.copy_(state.global_error_dict[bucket_index])
 
     state.maybe_increase_iter(bucket)
+    
+    # 修复2: 定期清理内存，避免内存泄漏
+    state.cleanup_memory_if_needed()
 
     fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
     # fut.set_result(input_tensor / world_size)  原代码有typo
@@ -354,6 +410,10 @@ def sparse_hook_sync_large_batch_ef21(
         state.global_error_dict[bucket_index].add_(input_tensor, alpha=1.0)
         # reset the full input tensor
         state.maybe_increase_iter(bucket)
+        
+        # 修复2: 定期清理内存，避免内存泄漏
+        state.cleanup_memory_if_needed()
+        
         fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
         fut.set_result(input_tensor)
         return fut
@@ -366,7 +426,8 @@ def sparse_hook_sync_large_batch_ef21(
     diff_cp = torch.clone(input_tensor).detach()
 
     if state.random:    
-        seed = torch.randint(0, 1_000_000_000, (1,), generator=state.rng).item()
+        # 修复3: 使用预计算的种子，减少运行时开销
+        seed = state.get_next_seed()
         torch.manual_seed(seed)
 
     sparsify_func = {"row": sparsify_by_row, "column": sparsify_by_column, "tensor": sparsify}[state.sparse_type]
@@ -394,8 +455,12 @@ def sparse_hook_sync_large_batch_ef21(
         decompress_memory_to_tensor_and_aggregate(tensors, k_list, values_memory, indices_memory, aggregate=False)
     else:
         # Allgather the values and indices
-        values_memory_allgather = _get_allgather_out_list(values_memory, world_size)
-        indices_memory_allgather = _get_allgather_out_list(indices_memory, world_size)
+        # 修复1: 使用缓存的tensor列表，避免重复分配内存
+        values_cache_key = f"values_{values_memory.shape}_{values_memory.dtype}"
+        indices_cache_key = f"indices_{indices_memory.shape}_{indices_memory.dtype}"
+        
+        values_memory_allgather = state.get_or_create_allgather_cache(values_memory, world_size, values_cache_key)
+        indices_memory_allgather = state.get_or_create_allgather_cache(indices_memory, world_size, indices_cache_key)
 
         dist.all_gather(values_memory_allgather, values_memory, group=group_to_use, async_op=False)
         dist.all_gather(indices_memory_allgather, indices_memory, group=group_to_use, async_op=False)
@@ -411,11 +476,90 @@ def sparse_hook_sync_large_batch_ef21(
     input_tensor.copy_(state.global_error_dict[bucket_index])
 
     state.maybe_increase_iter(bucket)
+    
+    # 修复2: 定期清理内存，避免内存泄漏
+    state.cleanup_memory_if_needed()
 
     fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
     fut.set_result(input_tensor)
     return fut
 
+
+def fake_sparse_hook(
+    state: SparseState, bucket: dist.GradBucket
+) -> torch.futures.Future[torch.Tensor]:
+    # bucket.buffer()  Gradient: a one-dimensional tensor
+    # bucket.gradients()  Gradient list layer by layer
+    # bucket.parameters() Parameters
+    # bucket.is_last()  Is this the last buffer
+    # bucket.index()    Index of the buffer
+
+    # check if the key is ready in precond adam
+    state.maybe_accumulate_momentum_on_bucket(bucket)
+
+    process_group = state.process_group
+    group_to_use = process_group if process_group is not None else dist.group.WORLD
+    world_size = group_to_use.size()
+    rank = dist.get_rank(group=group_to_use) # 获取 当前进程 在 group_to_use 这个通信组中的 rank。（process_group 就是指的只有一个通信组）
+
+    # The input tensor is a flattened 1D tensor.
+    input_tensor = bucket.buffer()  
+    tensors = bucket.gradients() 
+ 
+    # Run vanilla allreduce in the first `start_compress_iter` iterations.
+    if state.iter < state.start_compress_iter:
+        state.maybe_increase_iter(bucket)
+        return default_hooks._allreduce_fut(group_to_use, input_tensor, state)
+    
+    # 新增：压缩切换的平滑处理
+    if not state.compression_started:
+        state.compression_started = True
+        logger.info(f"Starting compression at iteration {state.iter} with gradual compression enabled: {state.gradual_compression}")
+        if state.use_error_feedback in ["ef14", "ef21"]:
+            logger.info("Initializing error feedback mechanism for smooth compression transition")
+    
+    # group_topk 压缩器压缩 -----------------------------------------------------------------------------------
+    device = tensors[0].device  
+    dtype = tensors[0].dtype
+
+    # 获取当前的压缩比（支持渐进式压缩）
+    current_compress_ratio = state.get_current_compress_ratio()
+
+    
+    bucket_index = bucket.index() 
+    total_length = input_tensor.shape[0]
+    if state.use_error_feedback == "ef14":
+        if bucket_index in state.error_dict:
+            input_tensor.add_(state.error_dict[bucket_index], alpha=1.0) # input_tensor = \nabla F_i + E_{i-1}
+        else:
+            logger.info("A zero tensor of length %s that represents local error is created.", total_length)
+            state.error_dict[bucket_index] = torch.zeros(total_length, device=device, dtype=dtype)
+    
+    state.error_dict[bucket_index].copy_(input_tensor)  # E_i = \nabla F_i + E_{i-1}
+
+    for tensor in tensors:
+        if len(tensor.shape) == 2:
+            m, n = tensor.shape # [m, n]
+            k = max(1, int(m * current_compress_ratio))
+            if not state.random:    # topk rows
+                sigma = torch.norm(tensor, dim=1).abs() # [m, 1]
+                zero_indices = torch.argsort(sigma, descending=True)[k:]
+            else:                   # randk rows
+                zero_indices = torch.randperm(m, device=device, generator=state.rng)[k:]
+            tensor[zero_indices] = 0.0  # 将非top k的元素置为0
+
+        elif len(tensor.shape) > 2:
+            raise NotImplementedError("Fake Group TopK compression only supports 2D tensors.")
+    
+    state.error_dict[bucket_index].add_(input_tensor, alpha=-1.0)  # E_i = \nabla F_i + E_{i-1} - C[\nabla F_i + E_{i-1}]
+    # allreduce
+    dist.all_reduce(input_tensor, group=group_to_use, async_op=False) # async_op=False 表示会阻塞程序执行，直到 all_reduce 完全完成。
+
+    state.maybe_increase_iter(bucket)
+    fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
+    fut.set_result(input_tensor)
+
+    return fut
 
 
 if __name__ == "__main__":

@@ -103,7 +103,29 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             random_seed=args.seed,
         )
         model.register_comm_hook(hook_state, sparse_hook_sync) # 注册通信hook
-  
+    elif args.compressor == "fake_topk_sync" or args.compressor == "fake_randk_sync":
+        from comm_hooks.sparse_hook import SparseState, fake_sparse_hook
+        random = 'randk' in args.compressor
+        hook_state = SparseState(
+            process_group=process_group,
+            compress_ratio=args.compress_ratio, 
+            sparse_type=args.sparse_type,
+            use_error_feedback=args.use_error_feedback,
+            random=random,
+            start_compress_iter=args.start_compress_iter,
+            random_seed=args.seed,
+        )
+    elif args.compressor == "fake_group_topk" :
+        from comm_hooks.group_topk_hook_no_reshape import fake_group_topk_hook, GroupTopKState
+        hook_state = GroupTopKState(
+            process_group=process_group, 
+            r=args.col_rank, 
+            use_error_feedback=args.use_error_feedback, 
+            seed=args.seed,
+            start_compress_iter=args.start_compress_iter,
+            compress_ratio=args.compress_ratio,
+        )
+        model.register_comm_hook(hook_state, fake_group_topk_hook) # 注册通信hook
 
     elif args.compressor == "group_topk_no_reshape" :
         from comm_hooks.group_topk_hook_no_reshape import group_topk_hook, GroupTopKState
