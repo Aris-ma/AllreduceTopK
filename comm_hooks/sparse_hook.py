@@ -537,6 +537,10 @@ def fake_sparse_hook(
     
     state.error_dict[bucket_index].copy_(input_tensor)  # E_i = \nabla F_i + E_{i-1}
 
+    if bucket_index not in state.generator:
+        state.generator[bucket_index] = torch.Generator(device = device)
+        state.generator[bucket_index].manual_seed(torch.randint(0, 100000, (1,), generator=state.rng).item())
+
     for tensor in tensors:
         if len(tensor.shape) == 2:
             m, n = tensor.shape # [m, n]
@@ -545,7 +549,7 @@ def fake_sparse_hook(
                 sigma = torch.norm(tensor, dim=1).abs() # [m, 1]
                 zero_indices = torch.argsort(sigma, descending=True)[k:]
             else:                   # randk rows
-                zero_indices = torch.randperm(m, device=device, generator=state.rng)[k:]
+                zero_indices = torch.randperm(m, device=device, generator=state.generator[bucket_index])[k:]
             tensor[zero_indices] = 0.0  # 将非top k的元素置为0
 
         elif len(tensor.shape) > 2:

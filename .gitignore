@@ -1,4 +1,5 @@
 output**
 **__pycache__
 wandb
-c4/c4_en
+c4_en
+*.slurm

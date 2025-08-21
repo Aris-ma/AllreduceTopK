@@ -180,6 +180,8 @@ class GroupTopKState(HookState):
         # 设置统一的 RNG，用于 sample 每一轮的投影矩阵 seed
         self.rng = torch.Generator()
         self.rng.manual_seed(seed)
+        self.generator: Dict[int, torch.Generator] = {}       # store 1D error tensor for EF14 and EF21
+
     
     def get_current_compress_ratio(self):
         """计算当前的压缩比，支持渐进式压缩"""
@@ -405,15 +407,19 @@ def fake_group_topk_hook(
     
     state.error_dict[bucket_index].copy_(input_tensor)  # E_i = \nabla F_i + E_{i-1}
 
+    if bucket_index not in state.generator:
+        state.generator[bucket_index] = torch.Generator(device = device)
+        state.generator[bucket_index].manual_seed(torch.randint(0, 100000, (1,), generator=state.rng).item())
+
     for tensor in tensors:
         if len(tensor.shape) == 2:
             m, n = tensor.shape # [m, n]
             k = max(1, int(m * current_compress_ratio))
             V = torch.empty(n, state.r, dtype=dtype, device=device) # [n, r]
-            V.normal_(generator=state.rng)
+            V.normal_(generator=state.generator[bucket_index])  # 使用固定的seed生成投影矩阵，提高稳定性
             sigma = torch.norm(tensor @ V, dim=1).abs() # [m, 1]
             zero_indices = torch.argsort(sigma, descending=True)[k:]
-            tensor[zero_indices, :] = 0.0  # 将非top k的元素置为0
+            tensor[zero_indices] = 0.0  # 将非top k的元素置为0
         elif len(tensor.shape) > 2:
             raise NotImplementedError("Fake Group TopK compression only supports 2D tensors.")
     
