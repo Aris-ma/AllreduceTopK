@@ -91,7 +91,7 @@ class HookState:
 def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None):
     hook_state = None
     if args.compressor == "topk_sync" or args.compressor == "randk_sync": 
-        from comm_hooks.sparse_hook import SparseState, sparse_hook_sync
+        from comm_hooks.sparse_hook_c4 import SparseState, sparse_hook_sync
         random = 'randk' in args.compressor
         hook_state = SparseState(
             process_group=process_group,
@@ -106,7 +106,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
   
 
     elif args.compressor == "group_topk_no_reshape" :
-        from comm_hooks.group_topk_hook_no_reshape import group_topk_hook, GroupTopKState
+        from comm_hooks.group_topk_hook_no_reshape_c4 import group_topk_hook, GroupTopKState
         hook_state = GroupTopKState(
             process_group=process_group, 
             r=args.r, 

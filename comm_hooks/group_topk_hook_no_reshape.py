@@ -46,8 +46,10 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         m = tensor.shape[1]
         k = max(1, int(n * compress_ratio))
     
-        V = torch.randn(m, r, device=tensor.device)
+        V = torch.randn(m, r, device=tensor.device, dtype=tensor.dtype) # dtype跟随 tensor
         # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
+        if V.dtype != tensor.dtype or V.device != tensor.device:
+            V = V.to(device=tensor.device, dtype=tensor.dtype)
         P_local = tensor @ V     # shape: [n, r]
     
         # AllReduce to get global projection P
@@ -74,8 +76,10 @@ def group_topk_project_and_select(tensor, r, compress_ratio, group):
         tensor_2D = tensor.reshape(n, m)
         k = max(1, int(n * compress_ratio))
     
-        V = torch.randn(m, r, device=tensor.device)
+        V = torch.randn(m, r, device=tensor.device, dtype=tensor.dtype)
         # print(f"tensor.shape = {tensor.shape}, V.shape = {V.shape}")
+        if V.dtype != tensor.dtype or V.device != tensor.device:
+            V = V.to(device=tensor.device, dtype=tensor.dtype)
         P_local = tensor_2D @ V     # shape: [n, r]
     
         # AllReduce to get global projection P

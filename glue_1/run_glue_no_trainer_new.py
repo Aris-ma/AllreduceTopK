@@ -51,7 +51,7 @@ from wandb import Html
 
 # 设置 WandB 项目名与 API key
 os.environ["WANDB_API_KEY"] = "0f2bf1daed22671b7865ab947c9cbc917de7f80e"
-os.environ["WANDB_LOG_MODEL"] = "checkpoint"
+# os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 
 ###
 import torch.distributed as dist
