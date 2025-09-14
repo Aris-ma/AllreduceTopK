@@ -2,21 +2,6 @@
 
 set -xe
 
-# 等待指定进程结束的函数
-wait_for_process_to_end() {
-    local pid=$1
-    echo "等待进程 $pid 结束..."
-    
-    while kill -0 $pid 2>/dev/null; do
-        echo "进程 $pid 仍在运行，等待中... $(date)"
-        sleep 30  # 每30秒检查一次
-    done
-    
-    echo "进程 $pid 已结束，开始执行训练任务... $(date)"
-}
-
-# 等待进程2213078结束
-wait_for_process_to_end 2213078
 
 # pip install cupy
 export SEED=1243

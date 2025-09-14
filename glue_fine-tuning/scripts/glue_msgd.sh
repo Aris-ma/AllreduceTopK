@@ -16,7 +16,7 @@ for TASK_NAME in cola;do
             for momentum in 0.9;do
                for learning_rate in 0.1;do
                     for seed in 1234 1236 1238;do
-                        PYTHONPATH=. accelerate launch glue_1/run_glue_no_trainer_new.py \
+                        PYTHONPATH=. accelerate launch glue_fine-tuning/run_glue_no_trainer_new.py \
                             --model_name_or_path /data/pretrained_models/roberta-base_1 \
                             --task_name $TASK_NAME \
                             --max_length 512 \

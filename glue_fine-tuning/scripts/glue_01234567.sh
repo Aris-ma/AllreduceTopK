@@ -17,7 +17,7 @@ for TASK_NAME in cola;do
     for compressor in "group_topk_no_reshape";do
         for use_error_feedback in "ef14";do
             for seed in 1513 1514;do
-                PYTHONPATH=. accelerate launch glue_1/run_glue_no_trainer_new.py \
+                PYTHONPATH=. accelerate launch glue_fine-tuning/run_glue_no_trainer_new.py \
                     --model_name_or_path /data/pretrained_models/roberta-base_1 \
                     --task_name $TASK_NAME \
                     --max_length 512 \
@@ -42,7 +42,7 @@ for TASK_NAME in cola;do
     for compressor in "randk_sync";do
         for use_error_feedback in "ef14";do
             for seed in 1513 1514;do
-                PYTHONPATH=. accelerate launch glue_1/run_glue_no_trainer_new.py \
+                PYTHONPATH=. accelerate launch glue_fine-tuning/run_glue_no_trainer_new.py \
                     --model_name_or_path /data/pretrained_models/roberta-base_1 \
                     --task_name $TASK_NAME \
                     --max_length 512 \

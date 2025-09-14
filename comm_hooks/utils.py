@@ -106,7 +106,8 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
   
 
     elif args.compressor == "group_topk_no_reshape" :
-        from comm_hooks.group_topk_hook_no_reshape_c4 import group_topk_hook, GroupTopKState
+        #from comm_hooks.group_topk_hook_no_reshape_c4 import group_topk_hook, GroupTopKState
+        from comm_hooks.group_topk_hook_no_reshape import group_topk_hook, GroupTopKState
         hook_state = GroupTopKState(
             process_group=process_group, 
             r=args.r, 
