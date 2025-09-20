@@ -2,18 +2,16 @@
 
 export CUDA_VISIBLE_DEVICES=0,1
 export HF_ENDPOINT=https://hf-mirror.com
-# export HTTP_PROXY=http://127.0.0.1:7890
-# export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
 
 export WANDB_API_KEY="0f2bf1daed22671b7865ab947c9cbc917de7f80e"
 
-cd GroupTopK
-
-for TASK_NAME in sst2 qnli;do
+for TASK_NAME in copa;do
     for compressor in "none";do
         for use_error_feedback in "noef";do
             for seed in 1240;do
-                PYTHONPATH=. accelerate launch superglue_fine-tuning/run_superglue_no_trainer_new.py \
+                PYTHONPATH=. accelerate launch superglue_fine-tuning/run_superglue_no_trainer.py \
                     --model_name_or_path /data/pretrained_models/roberta-large \
                     --task_name $TASK_NAME \
                     --max_length 512 \

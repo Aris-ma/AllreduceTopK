@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Finetuning a 🤗 Transformers model for sequence classification on GLUE."""
+""" Finetuning a 🤗 Transformers model for sequence classification on SuperGLUE."""
 import argparse
 import json
 import logging
@@ -62,21 +62,12 @@ logger = get_logger(__name__)
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/text-classification/requirements.txt")
 
-# task_to_keys = {
-#     "cola": ("sentence", None),
-#     "mnli": ("premise", "hypothesis"),
-#     "mrpc": ("sentence1", "sentence2"),
-#     "qnli": ("question", "sentence"),
-#     "qqp": ("question1", "question2"),
-#     "rte": ("sentence1", "sentence2"),
-#     "sst2": ("sentence", None),
-#     "stsb": ("sentence1", "sentence2"),
-#     "wnli": ("sentence1", "sentence2"),
-# }
 
 task_to_keys = {
-    "boolq": ("passage", "question"),
-    "copa": ("premise", "choice1"),  # choice2
+    "axb": ("sentence1", "sentence2", None),
+    "boolq": ("passage", "question", None),
+    "copa": ("premise", "choice1", "choice2"),
+    "multirc": ("paragraph", "question", "answer"),
 }
 
 ###
@@ -110,7 +101,7 @@ def parse_args():
         "--task_name",
         type=str,
         default=None,
-        help="The name of the glue task to train on.",
+        help="The name of the super glue task to train on.",
         choices=list(task_to_keys.keys()),
     )
     parser.add_argument(
@@ -282,7 +273,7 @@ def main():
     
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_glue_no_trainer", args)
+    send_example_telemetry("run_super_glue_no_trainer", args)
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
@@ -316,7 +307,7 @@ def main():
     accelerator.wait_for_everyone()
 
     # Get the datasets: you can either provide your own CSV/JSON training and evaluation files (see below)
-    # or specify a GLUE benchmark task (the dataset will be downloaded automatically from the datasets Hub).
+    # or specify a super GLUE benchmark task (the dataset will be downloaded automatically from the datasets Hub).
 
     # For CSV/JSON files, this script will use as labels the column called 'label' and as pair of sentences the
     # sentences in columns called 'sentence1' and 'sentence2' if such column exists or the first two columns not named
@@ -329,7 +320,7 @@ def main():
     # download the dataset.
     if args.task_name is not None:
         # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset("glue", args.task_name)
+        raw_datasets = load_dataset("super_glue", args.task_name)
     else:
         # Loading the dataset from local csv or json file.
         data_files = {}
@@ -387,17 +378,19 @@ def main():
     
     # Preprocessing the datasets
     if args.task_name is not None:
-        sentence1_key, sentence2_key = task_to_keys[args.task_name]
+        sentence1_key, sentence2_key, sentence3_key = task_to_keys[args.task_name]
     else:
         # Again, we try to have some nice defaults but don't hesitate to tweak to your use case.
         non_label_column_names = [name for name in raw_datasets["train"].column_names if name != "label"]
-        if "sentence1" in non_label_column_names and "sentence2" in non_label_column_names:
-            sentence1_key, sentence2_key = "sentence1", "sentence2"
+        if "sentence1" in non_label_column_names and "sentence2" in non_label_column_names and "sentence3" in non_label_column_names:
+            sentence1_key, sentence2_key, sentence3_key = "sentence1", "sentence2", "sentence3"
         else:
-            if len(non_label_column_names) >= 2:
-                sentence1_key, sentence2_key = non_label_column_names[:2]
+            if len(non_label_column_names) >= 3:
+                sentence1_key, sentence2_key, sentence3_key = non_label_column_names[:3]
+            elif len(non_label_column_names) == 2:
+                sentence1_key, sentence2_key, sentence3_key = non_label_column_names[0], non_label_column_names[1], None
             else:
-                sentence1_key, sentence2_key = non_label_column_names[0], None
+                sentence1_key, sentence2_key, sentence3_key = non_label_column_names[0], None, None
 
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     label_to_id = None
@@ -434,14 +427,18 @@ def main():
 
     def preprocess_function(examples):
         # Tokenize the texts
-        texts = (
-            (examples[sentence1_key],) if sentence2_key is None else (examples[sentence1_key], examples[sentence2_key])
-        )
+        if sentence2_key is None:
+            texts = (examples[sentence1_key],)
+        elif sentence3_key is None:
+            texts = (examples[sentence1_key], examples[sentence2_key])
+        else:
+            texts = (examples[sentence1_key], examples[sentence2_key], examples[sentence3_key])
+
         result = tokenizer(*texts, padding=padding, max_length=args.max_length, truncation=True)
 
         if "label" in examples:
             if label_to_id is not None:
-                # Map labels to IDs (not necessary for GLUE tasks)
+                # Map labels to IDs (not necessary for super GLUE tasks)
                 result["labels"] = [label_to_id[l] for l in examples["label"]]
             else:
                 # In all cases, rename the column to labels because the model will expect that.
@@ -550,7 +547,7 @@ def main():
         accelerator.init_trackers(
             # f"glue_no_trainer_{args.task_name}_group_topk_{args.use_error_feedback}", 
             # program_name, 
-            f"glue_no_trainer_{args.task_name}",
+            f"super_glue_no_trainer_{args.task_name}",
             experiment_config,
             init_kwargs={"wandb": {"name": run_name + f"_global_bs{global_bs}"}} 
             )
@@ -559,7 +556,7 @@ def main():
 
     # Get the metric function
     if args.task_name is not None:
-        metric = evaluate.load("glue", args.task_name)
+        metric = evaluate.load("super_glue",args.task_name)
     else:
         metric = evaluate.load("accuracy")
 
@@ -700,7 +697,7 @@ def main():
             if args.with_tracking:    
                 accelerator.log(
                     {
-                        "accuracy" if args.task_name is not None else "glue": eval_metric,
+                        "accuracy" if args.task_name is not None else "super_glue": eval_metric,
                         "train_loss": total_loss.item() / len(train_dataloader),
                         "epoch": epoch,
                         "step": completed_steps,
