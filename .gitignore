@@ -1,2 +1,4 @@
 neural_network_experiments/data/*
 *.pyc
+Centralized_out/
+__pycache__

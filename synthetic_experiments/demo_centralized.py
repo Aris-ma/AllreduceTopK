@@ -1,7 +1,10 @@
+import os
 from useful_functions_with_batch import *
 from network_utils import *
 import cupy as cp
-from cupy_fuc import grad_with_batch_batched_gpu, PushPull_with_batch_batched_gpu
+import time
+# from cupy_fuc import grad_with_batch_batched_gpu, PushPull_with_batch_batched_gpu
+from cupy_fuc import grad_with_batch_batched_gpu, centralized_MSGD_batched_gpu
 
 # --- Experiment Parameters ---
 d = 10  # Dimension of the data features
@@ -11,7 +14,7 @@ num_runs = 20  # Number of parallel simulation runs to average results over
 device_id = "cuda:0"  # GPU device to use
 rho = 1e-2  # Regularization parameter
 lr = 5e-2  # Learning rate for the optimization algorithm
-max_it = 3000  # Maximum number of iterations for the algorithm
+max_it = 200  # Maximum number of iterations for the algorithm
 bs = 200  # Batch size for stochastic gradient calculation
 
 
@@ -40,7 +43,9 @@ init_x_cpu_single = init_x_func(n=n, d=d, seed=42)
 
 # Generate the mixing matrices for the Push-Pull algorithm (exponential graph)
 # A_cpu (row-stochastic), B_cpu (column-stochastic): (n, n)
-A_cpu, B_cpu = generate_exp_matrices(n=n, seed=42)
+# A_cpu, B_cpu = generate_exp_matrices(n=n, seed=42)
+A_cpu = np.ones((n, n)) / n  # Fully connected graph (for demo purposes)
+B_cpu = np.ones((n, n)) / n  # Fully connected graph (for demo purposes)
 print("CPU data is prepared.")
 
 
@@ -67,10 +72,8 @@ print(
     f"\nStarting batched experiment with n={n}, num_runs={num_runs} on GPU {device_id}"
 )
 
-# Execute the Push-Pull algorithm in a batched manner on the GPU
-L1_avg_df = PushPull_with_batch_batched_gpu(
-    A_gpu=A_gpu,
-    B_gpu=B_gpu,
+
+L1_avg_df = centralized_MSGD_batched_gpu(
     init_x_gpu_batched=init_x_gpu_batched,
     h_data_nodes_gpu=h_tilde_gpu_nodes,
     y_data_nodes_gpu=y_tilde_gpu_nodes,
@@ -81,17 +84,22 @@ L1_avg_df = PushPull_with_batch_batched_gpu(
     max_it=max_it,
     batch_size=bs,
     num_runs=num_runs,
+    beta=0.9  # Momentum parameter
 )
+
 print("\nL1_avg_df (from GPU batched execution):")
 print(L1_avg_df.head())
 
 
 # --- Save Results ---
 # Define the output path for the results CSV file
+cur_time = time.time()
+time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(cur_time))
 output_path = (
-    f"./EXP_out/EXP_avg_n={n}_gpu_batched.csv"
+    f"./Centralized_out/Centralized_avg_n={n}_{time_str}.csv"
 )
 # Save the DataFrame containing the average gradient norm history
+os.makedirs("./Centralized_out/", exist_ok=True)
 L1_avg_df.to_csv(output_path, index_label="iteration")
 print(f"Average results saved to {output_path}")
 
