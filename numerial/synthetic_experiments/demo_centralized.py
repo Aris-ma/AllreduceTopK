@@ -74,70 +74,72 @@ print(
 
 topk_ratio = 0.2
 seed = 50
-# L1_avg_df = centralized_MSGD_batched_gpu(
-#     init_x_gpu_batched=init_x_gpu_batched,
-#     h_data_nodes_gpu=h_tilde_gpu_nodes,
-#     y_data_nodes_gpu=y_tilde_gpu_nodes,
-#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
-#     rho=rho,
-#     lr=lr,
-#     sigma_n=0,  # Manually set noise, here it is 0
-#     eta=0.9,
-#     max_it=max_it,
-#     batch_size=bs,
-#     num_runs=num_runs,
-#     topk_ratio=topk_ratio,
-#     use_ef=True
-# )
-# L1_avg_df = centralized_MSGD_batched_gpu_randk(
-#     init_x_gpu_batched=init_x_gpu_batched,
-#     h_data_nodes_gpu=h_tilde_gpu_nodes,
-#     y_data_nodes_gpu=y_tilde_gpu_nodes,
-#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
-#     rho=rho,
-#     lr=lr,
-#     sigma_n=0,  # Manually set noise, here it is 0
-#     eta=0.9,
-#     max_it=max_it,
-#     batch_size=bs,
-#     num_runs=num_runs,
-#     topk_ratio=topk_ratio,
-#     use_ef=True
-# )
-# L1_avg_df = centralized_MSGD_batched_gpu_arc(
-#     init_x_gpu_batched=init_x_gpu_batched,
-#     h_data_nodes_gpu=h_tilde_gpu_nodes,
-#     y_data_nodes_gpu=y_tilde_gpu_nodes,
-#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
-#     rho=rho,
-#     lr=lr,
-#     sigma_n=0,  # Manually set noise, here it is 0
-#     eta=0.9,
-#     max_it=max_it,
-#     batch_size=bs,
-#     num_runs=num_runs,
-#     m=10,
-#     r=4,
-#     seed = seed,
-#     topk_ratio=topk_ratio,
-#     use_ef=True
-# )
 
-# L1_avg_df = centralized_SGD2M_batched_gpu(
-#     init_x_gpu_batched=init_x_gpu_batched,
-#     h_data_nodes_gpu=h_tilde_gpu_nodes,
-#     y_data_nodes_gpu=y_tilde_gpu_nodes,
-#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
-#     rho=rho,
-#     lr=lr,
-#     sigma_n=0,  # Manually set noise, here it is 0
-#     eta=0.9,
-#     max_it=max_it,
-#     batch_size=bs,
-#     num_runs=num_runs,
-#     topk_ratio=topk_ratio,
-#     use_ef=True
-# )
+
+L1_avg_df = centralized_MSGD_batched_gpu(
+    init_x_gpu_batched=init_x_gpu_batched,
+    h_data_nodes_gpu=h_tilde_gpu_nodes,
+    y_data_nodes_gpu=y_tilde_gpu_nodes,
+    grad_func_batched_gpu=grad_with_batch_batched_gpu,
+    rho=rho,
+    lr=lr,
+    sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
+    max_it=max_it,
+    batch_size=bs,
+    num_runs=num_runs,
+    topk_ratio=topk_ratio,
+    use_ef=True
+)
+L1_avg_df = centralized_MSGD_batched_gpu_randk(
+    init_x_gpu_batched=init_x_gpu_batched,
+    h_data_nodes_gpu=h_tilde_gpu_nodes,
+    y_data_nodes_gpu=y_tilde_gpu_nodes,
+    grad_func_batched_gpu=grad_with_batch_batched_gpu,
+    rho=rho,
+    lr=lr,
+    sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
+    max_it=max_it,
+    batch_size=bs,
+    num_runs=num_runs,
+    topk_ratio=topk_ratio,
+    use_ef=True
+)
+L1_avg_df = centralized_MSGD_batched_gpu_arc(
+    init_x_gpu_batched=init_x_gpu_batched,
+    h_data_nodes_gpu=h_tilde_gpu_nodes,
+    y_data_nodes_gpu=y_tilde_gpu_nodes,
+    grad_func_batched_gpu=grad_with_batch_batched_gpu,
+    rho=rho,
+    lr=lr,
+    sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
+    max_it=max_it,
+    batch_size=bs,
+    num_runs=num_runs,
+    m=10,
+    r=4,
+    seed = seed,
+    topk_ratio=topk_ratio,
+    use_ef=True
+)
+
+L1_avg_df = centralized_SGD2M_batched_gpu(
+    init_x_gpu_batched=init_x_gpu_batched,
+    h_data_nodes_gpu=h_tilde_gpu_nodes,
+    y_data_nodes_gpu=y_tilde_gpu_nodes,
+    grad_func_batched_gpu=grad_with_batch_batched_gpu,
+    rho=rho,
+    lr=lr,
+    sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
+    max_it=max_it,
+    batch_size=bs,
+    num_runs=num_runs,
+    topk_ratio=topk_ratio,
+    use_ef=True
+)
 L1_avg_df = centralized_SGD2M_batched_gpu_randk(
     init_x_gpu_batched=init_x_gpu_batched,
     h_data_nodes_gpu=h_tilde_gpu_nodes,
@@ -153,24 +155,24 @@ L1_avg_df = centralized_SGD2M_batched_gpu_randk(
     topk_ratio=topk_ratio,
     use_ef=True
 )
-# L1_avg_df = centralized_SGD2M_batched_gpu_arc(
-#     init_x_gpu_batched=init_x_gpu_batched,
-#     h_data_nodes_gpu=h_tilde_gpu_nodes,
-#     y_data_nodes_gpu=y_tilde_gpu_nodes,
-#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
-#     rho=rho,
-#     lr=lr,
-#     sigma_n=0,  # Manually set noise, here it is 0
-#     eta=0.9,
-#     max_it=max_it,
-#     batch_size=bs,
-#     num_runs=num_runs,
-#     m=10,
-#     r=4,
-#     seed = seed,
-#     topk_ratio=topk_ratio,
-#     use_ef=True
-# )
+L1_avg_df = centralized_SGD2M_batched_gpu_arc(
+    init_x_gpu_batched=init_x_gpu_batched,
+    h_data_nodes_gpu=h_tilde_gpu_nodes,
+    y_data_nodes_gpu=y_tilde_gpu_nodes,
+    grad_func_batched_gpu=grad_with_batch_batched_gpu,
+    rho=rho,
+    lr=lr,
+    sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
+    max_it=max_it,
+    batch_size=bs,
+    num_runs=num_runs,
+    m=10,
+    r=4,
+    seed = seed,
+    topk_ratio=topk_ratio,
+    use_ef=True
+)
 
 # print("\nL1_avg_df (from GPU batched execution):")
 # print(L1_avg_df.head())

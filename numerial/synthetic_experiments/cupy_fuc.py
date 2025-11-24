@@ -170,33 +170,6 @@ def PushPull_with_batch_batched_gpu(
         "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
     })
 
-def topk_gpu(g, k):
-    """
-    在 GPU 上按最后一维做 Top-K（按绝对值）。
-    g: (num_runs, n, d)
-    k: int
-    返回 g_topk (同 shape)
-    """
-    if k <= 0:
-        return cp.zeros_like(g)
-    num_runs, n, d = g.shape
-    k = int(min(max(1, k), d))  # 至少 1，最多 d
-
-    abs_g = cp.abs(g)
-    # argpartition 找到前 k 的位置（无序），取出最后 k 列
-    topk_idx = cp.argpartition(abs_g, -k, axis=2)[:, :, -k:]  # shape (num_runs, n, k)
-
-    # 构建一个空 tensor 并把这些位置填上原始值
-    g_topk = cp.zeros_like(g)
-
-    # 构造索引
-    batch_idx = cp.arange(num_runs)[:, None, None]  # (num_runs,1,1)
-    node_idx = cp.arange(n)[None, :, None]          # (1,n,1)
-    # topk_idx shape: (num_runs, n, k)
-    # 直接赋值
-    g_topk[batch_idx, node_idx, topk_idx] = g[batch_idx, node_idx, topk_idx]
-
-    return g_topk
 
 
 def loss_full_batched_gpu(x, y_nodes_gpu, h_nodes_gpu, rho):
@@ -238,6 +211,32 @@ def loss_full_batched_gpu(x, y_nodes_gpu, h_nodes_gpu, rho):
 
     return logistic_loss + reg
 
+def topk_gpu(g, k):
+    """
+    在 GPU 上按最后一维做 Top-K（按绝对值）。
+    g: (num_runs, n, d)
+    k: int
+    返回 g_topk (同 shape)
+    """
+    if k <= 0:
+        return cp.zeros_like(g)
+    num_runs, n, d = g.shape
+    k = int(min(max(1, k), d))  # 至少 1，最多 d
+
+    abs_g = cp.abs(g)
+    # argpartition 找到前 k 的位置（无序），取出最后 k 列
+    topk_idx = cp.argpartition(abs_g, -k, axis=2)[:, :, -k:]  # shape (num_runs, n, k)得到的 topk_idx 仍然是原始的维度编号
+
+    g_topk = cp.zeros_like(g)
+
+    # 构造索引
+    batch_idx = cp.arange(num_runs)[:, None, None]  # (num_runs,1,1)
+    node_idx = cp.arange(n)[None, :, None]          # (1,n,1)
+    # topk_idx shape: (num_runs, n, k)
+    # 直接赋值
+    g_topk[batch_idx, node_idx, topk_idx] = g[batch_idx, node_idx, topk_idx]
+
+    return g_topk
 
 
 def centralized_MSGD_batched_gpu(
@@ -275,14 +274,15 @@ def centralized_MSGD_batched_gpu(
     num_n, num_d = x.shape[1], x.shape[2]  # Number of nodes (n) and dimensions (d)
     
     # Initialize momentum (velocity)
-    velocity = cp.zeros((num_runs, 1, num_d), dtype=x.dtype)
+    # velocity = cp.zeros((num_runs, 1, num_d), dtype=x.dtype)
 
     # EF memory init
     if use_ef:
         e = cp.zeros_like(x)  # (num_runs, n, d)
-        h = cp.zeros_like(x)
     else:
         e = None
+
+    h = cp.zeros_like(x)
 
     # Store average gradient norm over runs
     avg_gradient_norm_history = []
@@ -299,24 +299,30 @@ def centralized_MSGD_batched_gpu(
         if topk_ratio is not None:
             k = int(max(1, num_d * topk_ratio))
             if use_ef:
-                # # EF14：v = g + e; c = TopK(v); e = v - c; 使用 c 聚合
+                # # EF14：
                 # v = g + e
                 # c = topk_gpu(v, k)
                 # e = v - c
                 # g_for_agg = c
-                # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                v = h - e
-                c = topk_gpu(v, k)
-                e = e + c
-                g_for_agg = c
+                # EF21：
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    v = h - e
+                    c = topk_gpu(v, k)
+                    e = e + c
+                    g_for_agg = e
 
             else:
                 # 仅 Top-K（无误差补偿）
-                g_for_agg = topk_gpu(g, k)
+                h = (1-eta) * h + eta * g
+                g_for_agg = topk_gpu(h, k)
         else:
             # 无压缩
-            g_for_agg = g
+            h = (1-eta) * h + eta * g
+            g_for_agg = h
     
         # Aggregate gradients by averaging across nodes for each run
         g_avg = cp.mean(g_for_agg, axis=1, keepdims=True)  # Shape: (num_runs, 1, d)
@@ -466,12 +472,15 @@ def centralized_MSGD_batched_gpu_randk(
                 # e = v - c
                 # g_for_agg = c
                 # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                v = h - e
-                # print("DEBUG v.shape before randk =", v.shape)
-                c = randk_gpu(v, k)
-                e = e + c
-                g_for_agg = c
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    v = h - e
+                    c = randk_gpu(v, k)
+                    e = e + c
+                    g_for_agg = e
 
             else:
                 # 仅 Top-K（无误差补偿）
@@ -683,12 +692,16 @@ def centralized_MSGD_batched_gpu_arc(
                 # e = v - c
                 # g_for_agg = c
                 # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                v = h - e
-                arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
-                c_local_recon = arc['local_recon']  # (runs,nodes,d)
-                e = e + c_local_recon
-                g_for_agg = c_local_recon
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    v = h - e
+                    arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
+                    c_local_recon = arc['local_recon']  # (runs,nodes,d)
+                    e = e + c_local_recon
+                    g_for_agg = e
 
             else:
                 # 仅 ARC-Top-K（无误差补偿）
@@ -826,12 +839,16 @@ def centralized_SGD2M_batched_gpu(
                 # e = v - c
                 # g_for_agg = c
                 # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                u = (1-eta) * u +eta * h
-                v = u - e
-                c = topk_gpu(v, k)
-                e = e + c
-                g_for_agg = c
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    u = (1-eta) * u +eta * h
+                    v = u - e
+                    c = topk_gpu(v, k)
+                    e = e + c
+                    g_for_agg = e
 
             else:
                 # 仅 Top-K（无误差补偿）
@@ -958,13 +975,17 @@ def centralized_SGD2M_batched_gpu_randk(
                 # e = v - c
                 # g_for_agg = c
                 # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                u = (1-eta) * u +eta * h
-                v = u - e
-                # print("DEBUG v.shape before randk =", v.shape)
-                c = randk_gpu(v, k)
-                e = e + c
-                g_for_agg = c
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    u = (1-eta) * u +eta * h
+                    v = u - e
+                    c = randk_gpu(v, k)
+                    e = e + c
+                    g_for_agg = e
+
 
             else:
                 # 仅 Top-K（无误差补偿）
@@ -1090,13 +1111,18 @@ def centralized_SGD2M_batched_gpu_arc(
                 # e = v - c
                 # g_for_agg = c
                 # EF21：v = g - e; c = TopK(v); e = e + c
-                h = (1-eta) * h + eta * g
-                u = (1-eta) * u +eta * h
-                v = u - e
-                arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
-                c_local_recon = arc['local_recon']  # (runs,nodes,d)
-                e = e + c_local_recon
-                g_for_agg = c_local_recon
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    u = (1-eta) * u +eta * h
+                    v = u - e
+                    arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
+                    c_local_recon = arc['local_recon']  # (runs,nodes,d)
+                    e = e + c_local_recon
+                    g_for_agg = e
+
 
             else:
                 # 仅 ARC-Top-K（无误差补偿）
