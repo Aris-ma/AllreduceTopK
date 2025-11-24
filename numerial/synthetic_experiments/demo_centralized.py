@@ -4,12 +4,12 @@ from network_utils import *
 import cupy as cp
 import time
 # from cupy_fuc import grad_with_batch_batched_gpu, PushPull_with_batch_batched_gpu
-from cupy_fuc import grad_with_batch_batched_gpu, centralized_MSGD_batched_gpu
+from cupy_fuc import grad_with_batch_batched_gpu, centralized_MSGD_batched_gpu,centralized_MSGD_batched_gpu_randk,centralized_MSGD_batched_gpu_arc,centralized_SGD2M_batched_gpu,centralized_SGD2M_batched_gpu_randk,centralized_SGD2M_batched_gpu_arc
 
 # --- Experiment Parameters ---
-d = 10  # Dimension of the data features
+d = 80  # Dimension of the data features
 L_total = 1440000  # Total number of data samples across all nodes
-n = 16  # Number of nodes in the network
+n = 4 # Number of nodes in the network
 num_runs = 20  # Number of parallel simulation runs to average results over
 device_id = "cuda:0"  # GPU device to use
 rho = 1e-2  # Regularization parameter
@@ -72,8 +72,73 @@ print(
     f"\nStarting batched experiment with n={n}, num_runs={num_runs} on GPU {device_id}"
 )
 
+topk_ratio = 0.2
+seed = 50
+# L1_avg_df = centralized_MSGD_batched_gpu(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+# L1_avg_df = centralized_MSGD_batched_gpu_randk(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+# L1_avg_df = centralized_MSGD_batched_gpu_arc(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     m=10,
+#     r=4,
+#     seed = seed,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
 
-L1_avg_df = centralized_MSGD_batched_gpu(
+# L1_avg_df = centralized_SGD2M_batched_gpu(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+L1_avg_df = centralized_SGD2M_batched_gpu_randk(
     init_x_gpu_batched=init_x_gpu_batched,
     h_data_nodes_gpu=h_tilde_gpu_nodes,
     y_data_nodes_gpu=y_tilde_gpu_nodes,
@@ -81,27 +146,47 @@ L1_avg_df = centralized_MSGD_batched_gpu(
     rho=rho,
     lr=lr,
     sigma_n=0,  # Manually set noise, here it is 0
+    eta=0.9,
     max_it=max_it,
     batch_size=bs,
     num_runs=num_runs,
-    beta=0.9  # Momentum parameter
+    topk_ratio=topk_ratio,
+    use_ef=True
 )
+# L1_avg_df = centralized_SGD2M_batched_gpu_arc(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     m=10,
+#     r=4,
+#     seed = seed,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
 
-print("\nL1_avg_df (from GPU batched execution):")
-print(L1_avg_df.head())
+# print("\nL1_avg_df (from GPU batched execution):")
+# print(L1_avg_df.head())
 
 
-# --- Save Results ---
-# Define the output path for the results CSV file
-cur_time = time.time()
-time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(cur_time))
-output_path = (
-    f"./Centralized_out/Centralized_avg_n={n}_{time_str}.csv"
-)
-# Save the DataFrame containing the average gradient norm history
-os.makedirs("./Centralized_out/", exist_ok=True)
-L1_avg_df.to_csv(output_path, index_label="iteration")
-print(f"Average results saved to {output_path}")
+# # --- Save Results ---
+# # Define the output path for the results CSV file
+# cur_time = time.time()
+# time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(cur_time))
+# output_path = (
+#     f"./Centralized_out/Centralized_avg_n={n}_{time_str}.csv"
+# )
+# # Save the DataFrame containing the average gradient norm history
+# os.makedirs("./Centralized_out/", exist_ok=True)
+# L1_avg_df.to_csv(output_path, index_label="iteration")
+# print(f"Average results saved to {output_path}")
 
 
 # --- GPU Memory Cleanup ---
