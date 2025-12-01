@@ -244,8 +244,8 @@ def train(epoch):
 
         _, predicted = outputs.max(1) 
         temloss = torch.tensor(batch_loss.item(), device=device)  # 后面会除以len(trainloader)所以用batch_loss
-        temtotal = torch.tensor(targets.size(0), device=device)  # 当前这卡上本轮的样本数
-        temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device=device)  # 当前这卡上预测对的样本数
+        temtotal = torch.tensor(targets.size(0), device=device)  # 当前这张卡上本轮的样本数
+        temcorrect = torch.tensor(predicted.eq(targets).sum().item(), device=device)  # 当前这张卡上预测对的样本数
 
         dist.all_reduce(temloss, op=dist.ReduceOp.SUM)  
         temloss = temloss / args.world_size

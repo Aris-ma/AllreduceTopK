@@ -214,7 +214,7 @@ def train(epoch):
     correct = 0
     total = 0
 
-    # 确保一开始没有残留梯度
+    # 置零，确保一开始没有残留梯度
     optimizer.zero_grad()
 
     for batch_idx, (inputs, targets) in enumerate(trainloader):

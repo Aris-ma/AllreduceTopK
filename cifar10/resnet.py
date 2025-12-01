@@ -74,7 +74,7 @@ class ResNet(nn.Module):
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False) # bias=False：卷积层后接 BN，BN 已含 bias，因此不需要
         self.bn1 = nn.BatchNorm2d(64)
-        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1) # layer1 步长是1
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1) # layer1 步长为1
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)

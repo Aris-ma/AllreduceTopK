@@ -162,7 +162,7 @@ def parse_args():
         help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
-        "--gradient_accumulation_steps",  # 每多少个 batch 才执行一次 optimizer.step()梯度更新，用于显存不够时的梯度累积。实际上相当于扩大 batch size
+        "--gradient_accumulation_steps",  # 每多少个 batch 才执行一次 optimizer.step()梯度更新，用于显存不够时的梯度累积。实际相当于扩大 batch size
         type=int,
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
