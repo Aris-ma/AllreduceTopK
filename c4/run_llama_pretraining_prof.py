@@ -370,7 +370,7 @@ def main(args):
     n_lora_restarts = 0
     for batch_idx, batch in enumerate(dataloader):
 
-        if global_rank == 0: # 记录时间
+        if global_rank == 0: 
             if global_step == begin_step:
                 cur_time = time.time()
             if global_step == end_step:

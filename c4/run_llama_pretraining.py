@@ -107,7 +107,7 @@ def evaluate_model(model, dataset_path, preprocess_batched, pad_idx, global_rank
                     else:
                         raise e
                     
-    val_data = val_data.shuffle(seed=42) # 只是希望把验证集打乱一次，然后固定顺序，保证和训练过程解耦。这样即使多次运行，验证集的顺序始终一致
+    val_data = val_data.shuffle(seed=42) 
     logger.info(f"Loaded validation dataset in {time.time() - _time:.2f} seconds")
 
     if not args.single_gpu:

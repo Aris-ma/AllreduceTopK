@@ -198,7 +198,7 @@ def main(args):
     logger.info("*" * 40)
 
     from requests.exceptions import ConnectionError
-    for attempt in range(5): # 为了健壮性，外层包了 5 次重试
+    for attempt in range(5): 
         try:
             data = datasets.load_dataset(args.dataset_path, split="train", streaming=True) # 流式加载数据集
         except ConnectionError as e:

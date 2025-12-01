@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def sparsify(tensor, compress_ratio, random=False): 
     tensor = tensor.flatten()
     k = max(1, int(tensor.numel() * compress_ratio))
-    if random: # random=True即使用randk
+    if random: 
         indices = torch.randperm(tensor.numel(), device=tensor.device)[:k] # indices 形状(k,)
         indices=indices.to(torch.int32)
         values = tensor[indices].clone()

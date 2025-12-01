@@ -87,7 +87,6 @@ def check_grad_identity(model):
             # 使用 all_reduce 聚合所有进程的梯度
             dist.all_reduce(grad, op=dist.ReduceOp.SUM)
 
-            # 计算平均梯度
             grad_mean = grad / dist.get_world_size()
 
             # 检查当前进程的梯度是否与平均梯度相同

@@ -121,3 +121,30 @@ def distribute_data(h, y, n):
     y_tilde = y.reshape(n, L_per_node)      # Shape: (n, L_per_node)
 
     return h_tilde, y_tilde
+
+
+def init_hetero_global_data(n=6, d=5, L_per_node=200, seed=42):
+    """
+    每个节点拥有不同分布的输入数据（feature heterogeneity）
+    """
+    np.random.seed(seed)
+    
+    # 每个节点的数据来自不同的 N(mu_i, I)
+    mu_list = np.random.normal(size=(n, d))
+    
+    h = np.zeros((n, int(L_per_node), d))
+    y = np.zeros((n, int(L_per_node)))
+    
+    # 一个共同的全局最优 x_opt
+    x_opt = np.random.normal(size=(1, d))
+    
+    for i in range(n):
+        # 节点 i 的输入分布不同
+        h[i] = np.random.normal(loc=mu_list[i], scale=1.0, size=(int(L_per_node), d))
+        
+        # logistic 标签
+        for l in range(int(L_per_node)):
+            p = 1 / (1 + np.exp(-np.dot(h[i, l], x_opt.flatten())))
+            y[i, l] = 1 if np.random.rand() < p else -1
+    
+    return h, y, x_opt

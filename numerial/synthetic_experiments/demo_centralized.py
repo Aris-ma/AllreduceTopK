@@ -14,7 +14,7 @@ num_runs = 20  # Number of parallel simulation runs to average results over
 device_id = "cuda:0"  # GPU device to use
 rho = 1e-2  # Regularization parameter
 lr = 5e-2  # Learning rate for the optimization algorithm
-max_it = 200  # Maximum number of iterations for the algorithm
+max_it = 2000  # Maximum number of iterations for the algorithm
 bs = 200  # Batch size for stochastic gradient calculation
 
 
@@ -37,22 +37,18 @@ h_tilde_cpu, y_tilde_cpu = distribute_data(h=h_global_cpu, y=y_global_cpu, n=n)
 print("h_tilde_cpu shape:", h_tilde_cpu.shape)
 print("y_tilde_cpu shape:", y_tilde_cpu.shape)
 
+# h_tilde_cpu, y_tilde_cpu, x_opt_cpu = init_hetero_global_data(n=n, d=d, L_per_node=L_total/n, seed=42)
+
+
 # Initialize the starting parameters for each node for a single run
 # init_x_cpu_single: (n, d)
 init_x_cpu_single = init_x_func(n=n, d=d, seed=42)
 
-# Generate the mixing matrices for the Push-Pull algorithm (exponential graph)
-# A_cpu (row-stochastic), B_cpu (column-stochastic): (n, n)
-# A_cpu, B_cpu = generate_exp_matrices(n=n, seed=42)
-A_cpu = np.ones((n, n)) / n  # Fully connected graph (for demo purposes)
-B_cpu = np.ones((n, n)) / n  # Fully connected graph (for demo purposes)
 print("CPU data is prepared.")
 
 
 # --- Data Transfer to GPU ---
 # Move the mixing matrices and distributed data to the selected GPU
-A_gpu = cp.asarray(A_cpu)
-B_gpu = cp.asarray(B_cpu)
 h_tilde_gpu_nodes = cp.asarray(h_tilde_cpu)  # Shape: (n, L, d)
 y_tilde_gpu_nodes = cp.asarray(y_tilde_cpu)  # Shape: (n, L)
 
@@ -63,7 +59,6 @@ init_x_gpu_batched = cp.repeat(
 )
 
 print("Data moved to GPU.")
-print("A_gpu shape:", A_gpu.shape)
 print("h_tilde_gpu_nodes shape:", h_tilde_gpu_nodes.shape)
 print("init_x_gpu_batched shape:", init_x_gpu_batched.shape)
 

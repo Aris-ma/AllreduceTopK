@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 def sparsify(tensor, compress_ratio, random=False): 
     tensor = tensor.flatten()
     k = max(1, int(tensor.numel() * compress_ratio))
-    if random: # random=True即使用randk
+    if random: 
         indices = torch.randperm(tensor.numel(), device=tensor.device)[:k] # indices 形状(k,)
         indices=indices.to(torch.int32)
         values = tensor[indices].clone()
         # values = torch.gather(tensor, 0, indices) 
         comm_bits = tensor_bits(values)
     else:
-        _, indices = torch.topk(tensor.abs(), k, sorted=False)  # 使用topk, indices 形状(k,)
+        _, indices = torch.topk(tensor.abs(), k, sorted=False)  
         indices=indices.to(torch.int32)
         values = tensor[indices].clone()
         # values = torch.gather(tensor, 0, indices) 
