@@ -4,17 +4,19 @@ from network_utils import *
 import cupy as cp
 import time
 # from cupy_fuc import grad_with_batch_batched_gpu, PushPull_with_batch_batched_gpu
-from cupy_fuc import grad_with_batch_batched_gpu, centralized_MSGD_batched_gpu,centralized_MSGD_batched_gpu_randk,centralized_MSGD_batched_gpu_arc,centralized_SGD2M_batched_gpu,centralized_SGD2M_batched_gpu_randk,centralized_SGD2M_batched_gpu_arc
+from cupy_fuc import grad_with_batch_batched_gpu, centralized_MSGD_batched_gpu,centralized_MSGD_batched_gpu_randk,centralized_MSGD_batched_gpu_arc,centralized_SGD2M_batched_gpu,centralized_SGD2M_batched_gpu_randk,centralized_SGD2M_batched_gpu_arc,centralized_MSGD_batched_gpu_arc_1
+import wandb
+
 
 # --- Experiment Parameters ---
-d = 80  # Dimension of the data features
+d = 40  # Dimension of the data features
 L_total = 1440000  # Total number of data samples across all nodes
 n = 4 # Number of nodes in the network
 num_runs = 20  # Number of parallel simulation runs to average results over
 device_id = "cuda:0"  # GPU device to use
 rho = 1e-2  # Regularization parameter
 lr = 5e-2  # Learning rate for the optimization algorithm
-max_it = 2000  # Maximum number of iterations for the algorithm
+max_it = 3000  # Maximum number of iterations for the algorithm
 bs = 200  # Batch size for stochastic gradient calculation
 
 
@@ -27,7 +29,7 @@ print(f"Using GPU: {cp.cuda.Device(gpu_id_int).pci_bus_id}")
 # --- Data Initialization (CPU) ---
 # Generate global synthetic data on the CPU
 # h_global_cpu: (L_total, d), y_global_cpu: (L_total,), x_opt_cpu: (1, d)
-h_global_cpu, y_global_cpu, x_opt_cpu = init_global_data(d=d, L_total=L_total, seed=42)
+h_global_cpu, y_global_cpu, x_opt_cpu = init_global_data(d=d, L_total=L_total, seed=42, hetero_groups=3)
 print("h_global_cpu shape:", h_global_cpu.shape)
 print("y_global_cpu shape:", y_global_cpu.shape)
 
@@ -71,36 +73,56 @@ topk_ratio = 0.2
 seed = 50
 
 
-L1_avg_df = centralized_MSGD_batched_gpu(
-    init_x_gpu_batched=init_x_gpu_batched,
-    h_data_nodes_gpu=h_tilde_gpu_nodes,
-    y_data_nodes_gpu=y_tilde_gpu_nodes,
-    grad_func_batched_gpu=grad_with_batch_batched_gpu,
-    rho=rho,
-    lr=lr,
-    sigma_n=0,  # Manually set noise, here it is 0
-    eta=0.9,
-    max_it=max_it,
-    batch_size=bs,
-    num_runs=num_runs,
-    topk_ratio=topk_ratio,
-    use_ef=True
-)
-L1_avg_df = centralized_MSGD_batched_gpu_randk(
-    init_x_gpu_batched=init_x_gpu_batched,
-    h_data_nodes_gpu=h_tilde_gpu_nodes,
-    y_data_nodes_gpu=y_tilde_gpu_nodes,
-    grad_func_batched_gpu=grad_with_batch_batched_gpu,
-    rho=rho,
-    lr=lr,
-    sigma_n=0,  # Manually set noise, here it is 0
-    eta=0.9,
-    max_it=max_it,
-    batch_size=bs,
-    num_runs=num_runs,
-    topk_ratio=topk_ratio,
-    use_ef=True
-)
+# L1_avg_df = centralized_MSGD_batched_gpu(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+
+
+# L1_avg_df = centralized_MSGD_batched_gpu_arc_1(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     m=10,
+#     r=4,
+#     seed = seed,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+# L1_avg_df = centralized_MSGD_batched_gpu_randk(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
 L1_avg_df = centralized_MSGD_batched_gpu_arc(
     init_x_gpu_batched=init_x_gpu_batched,
     h_data_nodes_gpu=h_tilde_gpu_nodes,
@@ -120,54 +142,54 @@ L1_avg_df = centralized_MSGD_batched_gpu_arc(
     use_ef=True
 )
 
-L1_avg_df = centralized_SGD2M_batched_gpu(
-    init_x_gpu_batched=init_x_gpu_batched,
-    h_data_nodes_gpu=h_tilde_gpu_nodes,
-    y_data_nodes_gpu=y_tilde_gpu_nodes,
-    grad_func_batched_gpu=grad_with_batch_batched_gpu,
-    rho=rho,
-    lr=lr,
-    sigma_n=0,  # Manually set noise, here it is 0
-    eta=0.9,
-    max_it=max_it,
-    batch_size=bs,
-    num_runs=num_runs,
-    topk_ratio=topk_ratio,
-    use_ef=True
-)
-L1_avg_df = centralized_SGD2M_batched_gpu_randk(
-    init_x_gpu_batched=init_x_gpu_batched,
-    h_data_nodes_gpu=h_tilde_gpu_nodes,
-    y_data_nodes_gpu=y_tilde_gpu_nodes,
-    grad_func_batched_gpu=grad_with_batch_batched_gpu,
-    rho=rho,
-    lr=lr,
-    sigma_n=0,  # Manually set noise, here it is 0
-    eta=0.9,
-    max_it=max_it,
-    batch_size=bs,
-    num_runs=num_runs,
-    topk_ratio=topk_ratio,
-    use_ef=True
-)
-L1_avg_df = centralized_SGD2M_batched_gpu_arc(
-    init_x_gpu_batched=init_x_gpu_batched,
-    h_data_nodes_gpu=h_tilde_gpu_nodes,
-    y_data_nodes_gpu=y_tilde_gpu_nodes,
-    grad_func_batched_gpu=grad_with_batch_batched_gpu,
-    rho=rho,
-    lr=lr,
-    sigma_n=0,  # Manually set noise, here it is 0
-    eta=0.9,
-    max_it=max_it,
-    batch_size=bs,
-    num_runs=num_runs,
-    m=10,
-    r=4,
-    seed = seed,
-    topk_ratio=topk_ratio,
-    use_ef=True
-)
+# L1_avg_df = centralized_SGD2M_batched_gpu(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+# L1_avg_df = centralized_SGD2M_batched_gpu_randk(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
+# L1_avg_df = centralized_SGD2M_batched_gpu_arc(
+#     init_x_gpu_batched=init_x_gpu_batched,
+#     h_data_nodes_gpu=h_tilde_gpu_nodes,
+#     y_data_nodes_gpu=y_tilde_gpu_nodes,
+#     grad_func_batched_gpu=grad_with_batch_batched_gpu,
+#     rho=rho,
+#     lr=lr,
+#     sigma_n=0,  # Manually set noise, here it is 0
+#     eta=0.9,
+#     max_it=max_it,
+#     batch_size=bs,
+#     num_runs=num_runs,
+#     m=10,
+#     r=4,
+#     seed = seed,
+#     topk_ratio=topk_ratio,
+#     use_ef=True
+# )
 
 # print("\nL1_avg_df (from GPU batched execution):")
 # print(L1_avg_df.head())

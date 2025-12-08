@@ -1,6 +1,7 @@
 import cupy as cp
 import numpy as np
 import pandas as pd
+import wandb
 
 def grad_with_batch_batched_gpu(
     x_batched,      # Shape: (num_runs, n, d)
@@ -61,6 +62,7 @@ def grad_with_batch_batched_gpu(
     # einsum for h_dot_x: result shape (num_runs, n, batch_size_eff)
     # This computes the inner product <h, x> for each sample in the batch, for each node and run.
     h_dot_x = cp.einsum('rnbd,rnd->rnb', h_batch_gpu, x_batched)
+
     
     # Calculate the exponential term for the logistic loss gradient
     exp_val = cp.exp(y_batch_gpu * h_dot_x)
@@ -77,98 +79,6 @@ def grad_with_batch_batched_gpu(
     # Combine the two parts of the gradient
     grad_val = (g1 + rho * g2)  # Shape: (num_runs, n, d)
     return grad_val
-
-
-def PushPull_with_batch_batched_gpu(
-    A_gpu, B_gpu, init_x_gpu_batched, # init_x shape: (num_runs, n, d)
-    h_data_nodes_gpu, y_data_nodes_gpu, # Original h_tilde, y_tilde on GPU
-    grad_func_batched_gpu, # The new batched gradient function for GPU
-    rho, lr, sigma_n,
-    max_it, batch_size, num_runs
-):
-    """
-    Implements the Push-Pull algorithm with mini-batching, batched for multiple runs on a GPU.
-
-    Args:
-        A_gpu (cp.ndarray): Row-stochastic matrix for the x update. Shape: (n, n).
-        B_gpu (cp.ndarray): Column-stochastic matrix for the y update. Shape: (n, n).
-        init_x_gpu_batched (cp.ndarray): Initial parameters. Shape: (num_runs, n, d).
-        h_data_nodes_gpu (cp.ndarray): Full input data on GPU. Shape: (n, L, d).
-        y_data_nodes_gpu (cp.ndarray): Full labels on GPU. Shape: (n, L).
-        grad_func_batched_gpu (function): The GPU-accelerated gradient function.
-        rho (float): Regularization parameter.
-        lr (float): Learning rate.
-        sigma_n (float): Standard deviation of the noise added to the gradient.
-        max_it (int): Maximum number of iterations.
-        batch_size (int): Mini-batch size for gradient calculation.
-        num_runs (int): Number of parallel simulation runs.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing the history of the average gradient norm.
-    """
-    x = cp.copy(init_x_gpu_batched)  # Parameters. Shape: (num_runs, n, d)
-    num_n, num_d = x.shape[1], x.shape[2]  # Number of nodes (n) and dimensions (d)
-
-    # Initial gradient calculation
-    g = grad_func_batched_gpu(x, y_data_nodes_gpu, h_data_nodes_gpu, rho, batch_size, num_runs)
-    if sigma_n > 0:
-        # Add Gaussian noise to the gradient if specified
-        g += sigma_n * cp.random.normal(size=(num_runs, num_n, num_d))
-    
-    y = cp.copy(g)  # Gradient tracker. Shape: (num_runs, n, d)
-
-    # Store average gradient norm over runs
-    avg_gradient_norm_history = []
-
-    for iter_num in range(max_it):
-        # x_update: x = A @ x - lr * y
-        # A_gpu is (n,n). x is (num_runs, n, d).
-        # einsum performs the matrix-vector product for each run and dimension.
-        # 'jk,rkl->rjl' where j=n_out, k=n_in, r=num_runs, l=d
-        term_Ax = cp.einsum('jk,rkl->rjl', A_gpu, x)
-        x = term_Ax - lr * y
-        
-        # Calculate new gradient
-        g_new = grad_func_batched_gpu(x, y_data_nodes_gpu, h_data_nodes_gpu, rho, batch_size, num_runs)
-        if sigma_n > 0:
-            g_new += sigma_n * cp.random.normal(size=(num_runs, num_n, num_d))
-
-        # y_update: y = B @ y + g_new - g
-        term_By = cp.einsum('jk,rkl->rjl', B_gpu, y)
-        y = term_By + g_new - g
-        g = g_new  # Update old gradient
-
-        # --- Record history (averaged over runs) ---
-        # 1. Calculate mean_x for each run: x_mean_per_run shape (num_runs, 1, d)
-        x_mean_per_run = cp.mean(x, axis=1, keepdims=True)
-        
-        # 2. Expand x_mean_per_run for grad_func: shape (num_runs, n, d)
-        x_mean_expand_per_run = cp.broadcast_to(x_mean_per_run, (num_runs, num_n, num_d))
-        
-        # 3. Calculate full batch gradient for each run's x_mean: _grad_on_full_per_run shape (num_runs, n, d)
-        #    Use batch_size=None for full dataset, no sigma_n noise for this evaluation
-        _grad_on_full_per_run = grad_func_batched_gpu(
-            x_mean_expand_per_run, y_data_nodes_gpu, h_data_nodes_gpu,
-            rho=rho, batch_size=None, num_runs=num_runs
-        )
-        
-        # 4. Calculate mean gradient over nodes for each run: mean_grad_per_run shape (num_runs, 1, d)
-        mean_grad_per_run = cp.mean(_grad_on_full_per_run, axis=1, keepdims=True)
-        
-        # 5. Calculate norm of mean_grad for each run: norm_per_run shape (num_runs,)
-        norm_per_run = cp.linalg.norm(mean_grad_per_run, axis=2).squeeze()
-        
-        # 6. Average these norms over all runs: avg_norm_over_runs (scalar)
-        avg_norm_over_runs_scalar = cp.mean(norm_per_run)
-        avg_gradient_norm_history.append(cp.asnumpy(avg_norm_over_runs_scalar))  # Store as numpy float
-
-        if (iter_num + 1) % 10 == 0:  # Print progress
-            print(f"Iteration {iter_num+1}/{max_it}, Avg Grad Norm: {avg_norm_over_runs_scalar:.6f}")
-
-    print("\n")
-    return pd.DataFrame({
-        "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
-    })
 
 
 
@@ -268,6 +178,11 @@ def centralized_MSGD_batched_gpu(
     Returns:
         pd.DataFrame: A DataFrame containing the history of the average gradient norm.
     """
+    wandb.init(
+            project=f"numerial_d40_iter5000_hetero3", 
+            name=f"topk"
+        )
+    
     loss_history = []
 
     x = cp.copy(init_x_gpu_batched)  # Parameters. Shape: (num_runs, n, d)
@@ -366,8 +281,15 @@ def centralized_MSGD_batched_gpu(
         loss_history.append(l)
         if least_loss > l:
             least_loss = l
+        
         if (iter_num + 1) % 10 == 0:  # Print progress
+            wandb.log({
+                "train_loss": l,
+                "least_loss":least_loss,
+            },step=iter_num+1)
+
             print(f"Iteration {iter_num+1}/{max_it}, Avg Grad Norm: {avg_norm_over_runs_scalar:.6f}, Least_Loss:{least_loss}")
+
     print("\n")
     return pd.DataFrame({
         "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
@@ -436,6 +358,10 @@ def centralized_MSGD_batched_gpu_randk(
     Returns:
         pd.DataFrame: A DataFrame containing the history of the average gradient norm.
     """
+    wandb.init(
+            project=f"numerial_d40_iter5000_hetero3", 
+            name=f"randk"
+        )
     loss_history = []
 
     x = cp.copy(init_x_gpu_batched)  # Parameters. Shape: (num_runs, n, d)
@@ -532,7 +458,13 @@ def centralized_MSGD_batched_gpu_randk(
         if least_loss > l:
             least_loss = l
         if (iter_num + 1) % 10 == 0:  # Print progress
+            wandb.log({
+                "train_loss": l,
+                "least_loss":least_loss,
+            },step=iter_num+1)
+
             print(f"Iteration {iter_num+1}/{max_it}, Avg Grad Norm: {avg_norm_over_runs_scalar:.6f}, Least_Loss:{least_loss}")
+    
     print("\n")
     return pd.DataFrame({
         "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
@@ -568,16 +500,17 @@ def arctopk_gpu(g, m, r, mu, seed=None):
     # reshape g -> (num_runs, num_nodes, m, ncols)
     g_mat = g.reshape((num_runs, num_nodes, m, ncols))
 
-    # generate projection matrix V of shape (ncols, r)
-    if seed is None:
-        rng = cp.random
-    else:
-        rng = cp.random.RandomState(seed)
-    V = rng.normal(size=(ncols, r), dtype=g.dtype)  # (ncols, r)
+    # # generate projection matrix V of shape (ncols, r)
+    # if seed is None:
+    #     rng = cp.random
+    # else:
+    #     rng = cp.random.RandomState(seed)
+    # V = rng.normal(size=(ncols, r), dtype=g.dtype)  # (ncols, r)
 
-    # compute P_i = G_i @ V  -> shape (num_runs, num_nodes, m, r)
-    # einsum: 'rnmc,cr->r n m r'
-    P = cp.einsum('bnmc,cr->bnmr', g_mat, V)
+    # # compute P_i = G_i @ V  -> shape (num_runs, num_nodes, m, r)
+    # # einsum: 'rnmc,cr->r n m r'
+    # P = cp.einsum('bnmc,cr->bnmr', g_mat, V)
+    P = g_mat
 
     # All-Reduce (average across nodes) -> P_avg shape (num_runs, m, r)
     P_avg = cp.mean(P, axis=1)  # axis=1: average over nodes
@@ -656,6 +589,202 @@ def centralized_MSGD_batched_gpu_arc(
     Returns:
         pd.DataFrame: A DataFrame containing the history of the average gradient norm.
     """
+    wandb.init(
+            project=f"numerial_d40_iter5000_hetero3", 
+            name=f"arctopk_2"
+        )
+    loss_history = []
+
+    x = cp.copy(init_x_gpu_batched)  # Parameters. Shape: (num_runs, n, d)
+    num_n, num_d = x.shape[1], x.shape[2]  # Number of nodes (n) and dimensions (d)
+    
+    # Initialize momentum (velocity)
+    velocity = cp.zeros((num_runs, 1, num_d), dtype=x.dtype)
+
+    # # EF memory init
+    # if use_ef:
+    #     e = cp.zeros_like(x)  # (num_runs, n, d)
+    #     h = cp.zeros_like(x)
+    # else:
+    #     e = None
+
+    # # Store average gradient norm over runs
+    # avg_gradient_norm_history = []
+
+    # least_loss = 1
+    # for iter_num in range(max_it):
+    #     # Calculate gradients for all nodes based on their current parameters
+    #     g = grad_func_batched_gpu(x, y_data_nodes_gpu, h_data_nodes_gpu, rho, batch_size, num_runs)
+    #     if sigma_n > 0:
+    #         # Add Gaussian noise to the gradient if specified
+    #         g += sigma_n * cp.random.normal(size=(num_runs, num_n, num_d))
+
+    #     # 如果启用 Top-K / EF21，则在这里对 g 做 EF21，然后用压缩结果 c 来聚合
+    #     if topk_ratio is not None:
+    #         k = int(max(1, num_d * topk_ratio))
+    #         if use_ef:
+    #             # # EF14：v = g + e; c = TopK(v); e = v - c; 使用 c 聚合
+    #             # v = g + e
+    #             # c = topk_gpu(v, k)
+    #             # e = v - c
+    #             # g_for_agg = c
+    #             # EF21：v = g - e; c = TopK(v); e = e + c
+    #             if iter_num ==0:
+    #                 e = g
+    #                 g_for_agg = e
+    #             else:
+    #                 h = (1-eta) * h + eta * g
+    #                 v = h - e
+    #                 arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
+    #                 c_local_recon = arc['local_recon']  # (runs,nodes,d)
+    #                 e = e + c_local_recon
+    #                 g_for_agg = e
+
+    #         else:
+    #             # 仅 ARC-Top-K（无误差补偿）
+    #             arc = arctopk_gpu(g, m=m, r=r, mu=topk_ratio, seed=seed)
+    #             g_for_agg = arc['local_recon']
+    #     else:
+    #         # 无压缩
+    #         g_for_agg = g
+    # EF memory init
+    if use_ef:
+        e = cp.zeros((num_runs, 1, num_d), dtype=x.dtype)  # (num_runs, n, d)
+        h = cp.zeros((num_runs, 1, num_d), dtype=x.dtype)
+    else:
+        e = None
+
+    # Store average gradient norm over runs
+    avg_gradient_norm_history = []
+
+    least_loss = 1
+    for iter_num in range(max_it):
+        # Calculate gradients for all nodes based on their current parameters
+        g = grad_func_batched_gpu(x, y_data_nodes_gpu, h_data_nodes_gpu, rho, batch_size, num_runs)
+        g = cp.mean(g, axis=1, keepdims=True)
+        if sigma_n > 0:
+            # Add Gaussian noise to the gradient if specified
+            g += sigma_n * cp.random.normal(size=(num_runs, 1, num_d))
+
+        # 如果启用 Top-K / EF21，则在这里对 g 做 EF21，然后用压缩结果 c 来聚合
+        if topk_ratio is not None:
+            k = int(max(1, num_d * topk_ratio))
+            if use_ef:
+                # # EF14：v = g + e; c = TopK(v); e = v - c; 使用 c 聚合
+                # v = g + e
+                # c = topk_gpu(v, k)
+                # e = v - c
+                # g_for_agg = c
+                # EF21：v = g - e; c = TopK(v); e = e + c
+                if iter_num ==0:
+                    e = g
+                    g_for_agg = e
+                else:
+                    h = (1-eta) * h + eta * g
+                    v = h - e
+                    arc = arctopk_gpu(v, m=m, r=r, mu=topk_ratio, seed=seed)
+                    c_local_recon = arc['local_recon']  # (runs,nodes,d)
+                    e = e + c_local_recon
+                    g_for_agg = e
+
+            else:
+                # 仅 ARC-Top-K（无误差补偿）
+                arc = arctopk_gpu(g, m=m, r=r, mu=topk_ratio, seed=seed)
+                g_for_agg = arc['local_recon']
+        else:
+            # 无压缩
+            g_for_agg = g
+        
+        #尝试2
+        # Aggregate gradients by averaging across nodes for each run 
+        #g_avg = cp.mean(g_for_agg, axis=1, keepdims=True)  # Shape: (num_runs, 1, d)
+        g_avg = g_for_agg  # Shape: (num_runs, 1, d)
+
+        # # Update momentum (velocity)
+        # # m_{t+1} = beta * m_t + (1 - beta) * g_avg
+        # velocity = beta * velocity + (1 - beta) * g_avg
+
+        # # Update the parameters using momentum. The update is the same for all nodes in a run.
+        # x_updated_slice = x[:, 0:1, :] - lr * velocity
+        
+        x_updated_slice = x[:, 0:1, :] - lr * g_avg
+        
+        # Broadcast the updated parameters to all nodes within each run
+        x = cp.broadcast_to(x_updated_slice, (num_runs, num_n, num_d))
+
+        # --- Record history (averaged over runs) ---
+        # The parameters `x` are already the mean parameters (x_mean_per_run)
+        # 1. Calculate full batch gradient for each run's x_mean: _grad_on_full_per_run shape (num_runs, n, d)
+        #    Use batch_size=None for full dataset, no sigma_n noise for this evaluation
+        _grad_on_full_per_run = grad_func_batched_gpu(
+            x, y_data_nodes_gpu, h_data_nodes_gpu,
+            rho=rho, batch_size=None, num_runs=num_runs
+        )
+        
+        # 2. Calculate mean gradient over nodes for each run: mean_grad_per_run shape (num_runs, 1, d)
+        mean_grad_per_run = cp.mean(_grad_on_full_per_run, axis=1, keepdims=True)
+        
+        # 3. Calculate norm of mean_grad for each run: norm_per_run shape (num_runs,)
+        norm_per_run = cp.linalg.norm(mean_grad_per_run, axis=2).squeeze()
+        
+        # 4. Average these norms over all runs: avg_norm_over_runs (scalar)
+        avg_norm_over_runs_scalar = cp.mean(norm_per_run)
+        avg_gradient_norm_history.append(cp.asnumpy(avg_norm_over_runs_scalar))  # Store as numpy float
+
+        # === Compute full loss (for monitoring) ===
+        loss_value = loss_full_batched_gpu(
+           x, y_data_nodes_gpu, h_data_nodes_gpu, rho
+        )
+        l=cp.asnumpy(cp.mean(loss_value)).item()
+        loss_history.append(l)
+        if least_loss > l:
+            least_loss = l
+        if (iter_num + 1) % 10 == 0:  # Print progress
+            wandb.log({
+                    "train_loss": l,
+                    "least_loss":least_loss,
+                },step=iter_num+1)
+            print(f"Iteration {iter_num+1}/{max_it}, Avg Grad Norm: {avg_norm_over_runs_scalar:.6f}, Least_Loss:{least_loss}")
+    
+    print("\n")
+    return pd.DataFrame({
+        "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
+        "loss_full_avg": loss_history,
+    })
+
+def centralized_MSGD_batched_gpu_arc_1(
+    init_x_gpu_batched, # init_x shape: (num_runs, n, d)
+    h_data_nodes_gpu, y_data_nodes_gpu, # Original h_tilde, y_tilde on GPU
+    grad_func_batched_gpu, # The new batched gradient function for GPU
+    rho, lr, sigma_n,eta,
+    max_it, batch_size, num_runs, m, r, seed,
+    topk_ratio=None,
+    use_ef=None
+):
+    """
+    Implements centralized Momentum Stochastic Gradient Descent (MSGD), 
+    batched for multiple runs on a GPU.
+
+    Args:
+        init_x_gpu_batched (cp.ndarray): Initial parameters. All nodes in a run start with the same parameters. Shape: (num_runs, n, d).
+        h_data_nodes_gpu (cp.ndarray): Full input data on GPU. Shape: (n, L, d).
+        y_data_nodes_gpu (cp.ndarray): Full labels on GPU. Shape: (n, L).
+        grad_func_batched_gpu (function): The GPU-accelerated gradient function.
+        rho (float): Regularization parameter.
+        lr (float): Learning rate.
+        sigma_n (float): Standard deviation of the noise added to the gradient.
+        max_it (int): Maximum number of iterations.
+        batch_size (int): Mini-batch size for gradient calculation.
+        num_runs (int): Number of parallel simulation runs.
+        beta (float): Momentum parameter.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the history of the average gradient norm.
+    """
+    wandb.init(
+            project=f"numerial_d40_iter5000_hetero3", 
+            name=f"arctopk_1"
+        )
     loss_history = []
 
     x = cp.copy(init_x_gpu_batched)  # Parameters. Shape: (num_runs, n, d)
@@ -711,8 +840,12 @@ def centralized_MSGD_batched_gpu_arc(
             # 无压缩
             g_for_agg = g
     
-        # Aggregate gradients by averaging across nodes for each run
+    
+        
+
+        # Aggregate gradients by averaging across nodes for each run 
         g_avg = cp.mean(g_for_agg, axis=1, keepdims=True)  # Shape: (num_runs, 1, d)
+        
 
         # # Update momentum (velocity)
         # # m_{t+1} = beta * m_t + (1 - beta) * g_avg
@@ -754,13 +887,18 @@ def centralized_MSGD_batched_gpu_arc(
         if least_loss > l:
             least_loss = l
         if (iter_num + 1) % 10 == 0:  # Print progress
+            wandb.log({
+                "train_loss": l,
+                "least_loss":least_loss,
+            },step=iter_num+1)
+
             print(f"Iteration {iter_num+1}/{max_it}, Avg Grad Norm: {avg_norm_over_runs_scalar:.6f}, Least_Loss:{least_loss}")
+    
     print("\n")
     return pd.DataFrame({
         "gradient_norm_on_full_trainset_avg": avg_gradient_norm_history,
         "loss_full_avg": loss_history,
     })
-
 
 
 

@@ -45,6 +45,7 @@ def init_data(n=6, d=5, L=200, seed=42, sigma_h=10):
     return (h, y, x_opt, x_star)
 
 
+
 def init_x_func(n=6, d=10, seed=42):
     """
     Initializes the parameters for each node.
@@ -62,40 +63,40 @@ def init_x_func(n=6, d=10, seed=42):
     return 0.01 * np.random.normal(size=(n, d))  # Shape: (n, d)
 
 
-def init_global_data(d=5, L_total=200, seed=42):
-    """
-    Initializes homogeneous (global) data.
+# def init_global_data(d=5, L_total=200, seed=42):
+#     """
+#     Initializes homogeneous (global) data.
 
-    Args:
-        d (int): Dimension of the data features.
-        L_total (int): Total number of data samples.
-        seed (int): Random seed for reproducibility.
+#     Args:
+#         d (int): Dimension of the data features.
+#         L_total (int): Total number of data samples.
+#         seed (int): Random seed for reproducibility.
 
-    Returns:
-        tuple: A tuple containing:
-            - h (np.ndarray): Global input data. Shape: (L_total, d).
-            - y (np.ndarray): Global labels. Shape: (L_total,).
-            - x_opt (np.ndarray): The global optimal parameter. Shape: (1, d).
-    """
-    np.random.seed(seed)
-    # Generate a global optimal parameter
-    x_opt = np.random.normal(size=(1, d))  # Shape: (1, d)
+#     Returns:
+#         tuple: A tuple containing:
+#             - h (np.ndarray): Global input data. Shape: (L_total, d).
+#             - y (np.ndarray): Global labels. Shape: (L_total,).
+#             - x_opt (np.ndarray): The global optimal parameter. Shape: (1, d).
+#     """
+#     np.random.seed(seed)
+#     # Generate a global optimal parameter
+#     x_opt = np.random.normal(size=(1, d))  # Shape: (1, d)
 
-    # Generate global input data
-    h = np.random.normal(size=(L_total, d))  # Shape: (L_total, d)
+#     # Generate global input data
+#     h = np.random.normal(size=(L_total, d))  # Shape: (L_total, d)
 
-    # Initialize global labels
-    y = np.zeros(L_total)  # Shape: (L_total,)
-    # Generate labels based on a logistic regression model
-    for l in range(L_total):
-        z = np.random.uniform(0, 1)
-        # Sample from a Bernoulli distribution
-        if 1 / z > 1 + np.exp(-np.dot(h[l], x_opt.flatten())):
-            y[l] = 1
-        else:
-            y[l] = -1
+#     # Initialize global labels
+#     y = np.zeros(L_total)  # Shape: (L_total,)
+#     # Generate labels based on a logistic regression model
+#     for l in range(L_total):
+#         z = np.random.uniform(0, 1)
+#         # Sample from a Bernoulli distribution
+#         if 1 / z > 1 + np.exp(-np.dot(h[l], x_opt.flatten())):
+#             y[l] = 1
+#         else:
+#             y[l] = -1
 
-    return h, y, x_opt
+#     return h, y, x_opt
 
 
 def distribute_data(h, y, n):
@@ -122,6 +123,67 @@ def distribute_data(h, y, n):
 
     return h_tilde, y_tilde
 
+
+def init_global_data(d=5, L_total=200, seed=42, hetero_groups=1):
+    """
+    Initializes (possibly heterogeneous) global data.
+
+    Args:
+        d (int): Dimension of the data features.
+        L_total (int): Total number of data samples.
+        seed (int): Random seed for reproducibility.
+        hetero_groups (int): Number of heterogeneous groups.
+            - 1: fully homogeneous (equivalent to the original implementation)
+            - K>1: split samples into K segments; each segment follows a different distribution
+
+    Returns:
+        tuple:
+            - h (np.ndarray): Global input data. Shape: (L_total, d).
+            - y (np.ndarray): Global labels. Shape: (L_total,).
+            - x_opt (np.ndarray): The global optimal parameter. Shape: (1, d).
+    """
+    np.random.seed(seed)
+    # Global unified optimal parameter
+    x_opt = np.random.normal(size=(1, d))  # Shape: (1, d)
+
+    # Initialize feature matrix
+    h = np.zeros((L_total, d))
+
+    if hetero_groups <= 1:
+        # Fully homogeneous: keep the original behavior
+        h[:] = np.random.normal(size=(L_total, d))
+    else:
+        # Split samples into `hetero_groups` contiguous blocks
+        base_L = L_total // hetero_groups
+        remainder = L_total % hetero_groups
+
+        start = 0
+        for k in range(hetero_groups):
+            # Number of samples in the k-th group
+            L_k = base_L + (1 if k < remainder else 0)
+            end = start + L_k
+
+            # Set a different mean mu_k for the k-th group
+            # Here we use a scalar shift expanded to all feature dimensions;
+            # you can replace this with a random vector if needed.
+            shift_k = (k - (hetero_groups - 1) / 2.0)  # roughly in a symmetric range
+            mu_k = shift_k * np.ones(d)
+
+            h[start:end, :] = np.random.normal(loc=mu_k, scale=1.0, size=(L_k, d))
+            start = end
+
+    # Initialize labels
+    y = np.zeros(L_total)
+
+    # Use the original label-generation logic to keep behavior consistent
+    for l in range(L_total):
+        z = np.random.uniform(0, 1)
+        if 1 / z > 1 + np.exp(-np.dot(h[l], x_opt.flatten())):
+            y[l] = 1
+        else:
+            y[l] = -1
+
+    return h, y, x_opt
 
 def init_hetero_global_data(n=6, d=5, L_per_node=200, seed=42):
     """
