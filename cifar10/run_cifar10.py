@@ -33,10 +33,6 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-### 设置 WandB 项目名与 API key
-os.environ["WANDB_API_KEY"] = "0f2bf1daed22671b7865ab947c9cbc917de7f80e"
-os.environ["WANDB_LOG_MODEL"] = "checkpoint"
-
 ###
 from comm_hooks.utils import register_comm_hook_for_ddp_model, add_comm_hook_args
 

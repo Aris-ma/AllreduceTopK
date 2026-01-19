@@ -17,9 +17,9 @@ for use_error_feedback in "noef"; do
     for compressor in "none"; do
         for optimizer in "adamw"; do
             for seed in 1410; do
-                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar100.py \
+                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar10.py \
                     --lr 1e-3 \
-                    --use_wandb 1 \
+                    --use_wandb 0 \
                     --start_compress_iter 1000 \
                     --weight_decay 5e-4 \
                     --gradient_accumulation_steps 8 \
@@ -43,9 +43,9 @@ for use_error_feedback in "ef14"; do
     for compressor in "group_topk_no_reshape" "randk_sync"; do
         for optimizer in "adamw"; do
             for seed in 1412; do
-                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar100.py \
+                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar10.py \
                     --lr 1e-3 \
-                    --use_wandb 1 \
+                    --use_wandb 0 \
                     --start_compress_iter 1000 \
                     --weight_decay 5e-4 \
                     --gradient_accumulation_steps 8\
@@ -70,9 +70,9 @@ for use_error_feedback in "ef14"; do
     for compressor in "topk_sync"; do
         for optimizer in "adamw"; do
             for seed in 1412; do
-                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar100.py \
+                PYTHONPATH=. torchrun  --nproc_per_node=8 --master-port=29501 cifar10/run_cifar10.py \
                     --lr 1e-3 \
-                    --use_wandb 1 \
+                    --use_wandb 0 \
                     --start_compress_iter 1000 \
                     --weight_decay 5e-4 \
                     --gradient_accumulation_steps 4\

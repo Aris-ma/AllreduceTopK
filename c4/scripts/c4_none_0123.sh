@@ -5,7 +5,7 @@ set -xe
 
 # pip install cupy
 export SEED=1243
-export WANDB_API_KEY="0f2bf1daed22671b7865ab947c9cbc917de7f80e"
+# export WANDB_API_KEY = your_api_key
 
 # export HF_ENDPOINT=https://hf-mirror.com
 export http_proxy=http://127.0.0.1:7890

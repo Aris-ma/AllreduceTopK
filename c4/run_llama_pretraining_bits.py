@@ -97,9 +97,9 @@ def evaluate_model(model, dataset_path, preprocess_batched, pad_idx, global_rank
     _time = time.time()
     
     from requests.exceptions import ConnectionError
-    for attempt in range(5):# 为了健壮性，外层包了 5 次重试
+    for attempt in range(5):
         try:
-            val_data = datasets.load_dataset(dataset_path, split="validation", streaming=True) #DGX，# 流式加载数据集
+            val_data = datasets.load_dataset(dataset_path, split="validation", streaming=True)
         except ConnectionError as e:
                     if attempt < 5 - 1:
                         print(f"Connection error: {e}. Retrying...")
@@ -107,7 +107,7 @@ def evaluate_model(model, dataset_path, preprocess_batched, pad_idx, global_rank
                     else:
                         raise e
                     
-    val_data = val_data.shuffle(seed=42) # 只是希望把验证集打乱一次，然后固定顺序，保证和训练过程解耦。这样即使多次运行，验证集的顺序始终一致
+    val_data = val_data.shuffle(seed=42)
     logger.info(f"Loaded validation dataset in {time.time() - _time:.2f} seconds")
 
     if not args.single_gpu:
@@ -165,7 +165,7 @@ def main(args):
     global_rank = int(os.environ['RANK'])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    torch.cuda.set_device(local_rank) # 绑定GPU
+    torch.cuda.set_device(local_rank)
 
     logger.info(f"Global rank {global_rank}, local rank {local_rank}, device: {torch.cuda.current_device()}")
 
@@ -174,7 +174,7 @@ def main(args):
     logger.info("Process group initialized")
     device = f"cuda:{local_rank}"
 
-    if args.total_batch_size is not None: # 检验total_batch_size
+    if args.total_batch_size is not None: 
         if args.gradient_accumulation is None:
             assert args.total_batch_size % world_size == 0, "total_batch_size must be divisible by world_size"
             args.gradient_accumulation = args.total_batch_size // (args.batch_size * world_size)
@@ -213,7 +213,7 @@ def main(args):
     logger.info(f"Shuffling data with seed {seed_for_shuffle}")
     data: datasets.Dataset = data.shuffle(seed=seed_for_shuffle)
 
-    if not args.single_gpu: # 并行划分：多卡时用 datasets.distributed.split_dataset_by_node(...) 按 rank/world_size 切分，确保各 GPU 读到不重叠的样本。(类似 DistributedSampler)
+    if not args.single_gpu: 
         data = datasets.distributed.split_dataset_by_node(
             data, rank=global_rank, world_size=world_size,
         )
@@ -222,7 +222,7 @@ def main(args):
     # T5 tokenizer was trained on C4 and we are also training on C4, so it's a good choice
     tokenizer = AutoTokenizer.from_pretrained("/home/mcy/models--t5-base/snapshots/a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1", model_max_length=args.max_length)
 
-    def preprocess_batched(batch):# 批处理预处理函数
+    def preprocess_batched(batch):
         batch = tokenizer(
             batch["text"],
             max_length=args.max_length,
@@ -235,8 +235,8 @@ def main(args):
     dataset = PreprocessedIterableDataset(data, tokenizer, batch_size=args.batch_size, max_length=args.max_length) # 数据管道
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=None, num_workers=args.workers)
 
-    model_config = AutoConfig.from_pretrained(args.model_config) # 加载 LLaMA 模型配置。--model_config c4/configs/$MODEL.json \
-    if args.use_hf_model: # 加载模型
+    model_config = AutoConfig.from_pretrained(args.model_config)
+    if args.use_hf_model:
         model: HF_LlamaForCausalLM = AutoModelForCausalLM.from_config(model_config)
     else:
         model = LlamaForCausalLM(model_config)
@@ -310,7 +310,7 @@ def main(args):
         # doesn't jump around when changing from external display to laptop
         pbar = tqdm(total=args.num_training_steps - update_step, desc="Update steps", ncols=80) # update_step 是当前已经完成的更新步数，进度条会根据还剩多少步来显示剩余进度。
     
-    if args.optimizer.lower() == "adamw": # 仅支持adamw
+    if args.optimizer.lower() == "adamw":
         optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, betas=(args.beta1,args.beta2), eps=args.eps, weight_decay=args.weight_decay)
     else:
         raise ValueError(f"Optimizer {args.optimizer} not supported")
@@ -335,7 +335,7 @@ def main(args):
     if not args.single_gpu:
         # print(f"model type: {type(model)}")
         # print(model)
-        model: LlamaForCausalLM = torch.nn.parallel.DistributedDataParallel( # DDP 包装
+        model: LlamaForCausalLM = torch.nn.parallel.DistributedDataParallel( 
             model,
             device_ids=[local_rank],
             output_device=local_rank,
@@ -370,7 +370,7 @@ def main(args):
         global_step += 1
         local_step += 1
 
-        if update_step > args.num_training_steps: # 到 args.num_training_steps 步就break
+        if update_step > args.num_training_steps: 
             logger.info(f"Reached max number of update steps (f{args.num_training_steps}). Stopping training.")
             print(f"Rank {global_rank} stopping training.")
             break
@@ -379,14 +379,12 @@ def main(args):
         batch = {k: v.to(device) for k, v in batch.items()}
         labels = batch["input_ids"].clone()
         labels[labels == pad_idx] = -100
-        tokens_seen += (batch["input_ids"] != pad_idx).sum().item() * world_size # 累计已见有效 token 数（去除 pad），按 全局口径估算
-                                                                        # tokens_seen_before：上一更新时点的 tokens_seen，用于计算一次更新内吞吐。
-
+        tokens_seen += (batch["input_ids"] != pad_idx).sum().item() * world_size 
         loss = model(**batch, labels=labels).loss
         scaled_loss = loss / args.gradient_accumulation
         scaled_loss.backward()
 
-        if global_step % args.gradient_accumulation != 0:  # 到达更新点（即一个“大步”）才会执行下面的步骤，否则用continue来跳过了！！！
+        if global_step % args.gradient_accumulation != 0: 
             continue
 
         
@@ -406,7 +404,7 @@ def main(args):
         update_step += 1
         update_time = time.time() - update_time
 
-        # save checkpoint by save_every（构造 checkpoint 路径并准备写入优化器状态与训练状态（但实际写入被注释掉了））
+        # save checkpoint by save_every
         if local_step > args.gradient_accumulation and update_step % args.save_every == 0 and global_rank == 0:
             current_model_directory = f"{args.save_dir}/model_{update_step}"
             logger.info(f"Saving model and optimizer to {current_model_directory}, update step {update_step}")
@@ -465,12 +463,12 @@ def main(args):
         tokens_seen_before = tokens_seen
         batches_in_update = args.gradient_accumulation * world_size
 
-        if global_rank == 0:# 吞吐统计，上传wandb
+        if global_rank == 0:
 
             peak_memory = torch.cuda.max_memory_allocated() / (1024 * 1024)
 
             wandb.log({
-                "loss": loss.item(), # 这里 log 的 loss 是当前小步的 loss（没有平均）
+                "loss": loss.item(), 
                 "lr": lr,
                 "update_step": update_step,
                 # "tokens_seen": tokens_seen,
@@ -526,7 +524,7 @@ def main(args):
     import gc; gc.collect()
     torch.cuda.empty_cache()
 
-    total_loss, evaluated_on_tokens = evaluate_model( # 只留了在这里验证，也就是训练集全部训完才进行验证。
+    total_loss, evaluated_on_tokens = evaluate_model(
         model, args.dataset_path, preprocess_batched, pad_idx, global_rank, world_size, device, args.batch_size
     )
 
